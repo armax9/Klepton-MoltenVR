@@ -29,7 +29,7 @@
 //      No other button exists on a hand, but a trigger is the one a menu
 //      clicks with.
 //
-//  So this file is a merge, not a switch: Sense wins per hand where it is
+//  In Standard mode this file merges inputs: Sense wins per hand where it is
 //  present, hands fill in the rest, and a Sense controller that is paired for
 //  the right hand only still leaves the left hand tracking. Per *hand*, not
 //  per session, because that is how they actually arrive — one at a time,
@@ -46,71 +46,6 @@ import CoreHaptics
 import GameController
 import SwiftUI
 import simd
-
-/// One hand's worth of state, in the guest's own units.
-struct KleptonHandState {
-    var position: SIMD3<Float>?
-    var orientation: simd_quatf?
-    var buttons: UInt32 = 0
-    var touches: UInt32 = 0
-    var indexTrigger: Float = 0
-    var handTrigger: Float = 0
-    var stick: SIMD2<Float> = .zero
-    /// Tracking-space linear (m/s) and angular (rad/s) velocity, for the
-    /// ovrpPoseStatef fields libunity forwards to `XRNodeState.velocity`.
-    /// Only the Sense controllers report these — a `HandAnchor` carries no
-    /// motion at all, and differentiating a pose stream to invent one produces
-    /// a number that looks physical and is mostly tracker noise.
-    var linearVelocity: SIMD3<Float> = .zero
-    var angularVelocity: SIMD3<Float> = .zero
-    /// Whether a Sense controller supplied this, as opposed to a hand anchor.
-    /// Only a Sense controller can press anything, so this is also "are the
-    /// buttons meaningful".
-    var fromController = false
-    /// The bits this hand's menu button (Create / Options) stands for while it
-    /// is down, and the hand's other buttons and touches without them. Kept
-    /// apart because the metrics panel may hold that one button back
-    /// (`applyPanelChord`); `buttons` and `touches` are what the guest gets.
-    var pill: UInt32 = 0
-    var otherButtons: UInt32 = 0
-    var otherTouches: UInt32 = 0
-}
-
-/// `ovrpButton` **raw** bits.
-///
-/// Raw, not virtual: `ControllerState4.Buttons` carries `OVRInput.RawButton`,
-/// and OVRInput maps raw→virtual itself through its own buttonMap. Emitting
-/// virtual values is a specific, silent bug the host already hit — 0x2000 is
-/// `PrimaryIndexTrigger` in virtual space and `RThumbstickDown` in raw, so
-/// every "trigger press" became a stick flick and no press ever reached a UI.
-///
-/// The eight marked (v) are the ones `runtime/gfx/kl_view.c` drives on the host and
-/// which have been seen to work end to end in gameplay. The rest are the
-/// standard raw layout, consistent with those eight, and are **not** yet
-/// confirmed against the guest's own metadata — if a menu or stick click does
-/// nothing on device, suspect these before suspecting the plumbing.
-enum OVRPRawButton {
-    static let a: UInt32              = 0x0000_0001   // (v)
-    static let b: UInt32              = 0x0000_0002   // (v)
-    static let rThumbstick: UInt32    = 0x0000_0004
-    static let lThumbstickUp: UInt32   = 0x0000_0010
-    static let lThumbstickDown: UInt32 = 0x0000_0020
-    static let lThumbstickLeft: UInt32 = 0x0000_0040
-    static let lThumbstickRight: UInt32 = 0x0000_0080
-    static let x: UInt32              = 0x0000_0100   // (v)
-    static let y: UInt32              = 0x0000_0200   // (v)
-    static let lThumbstick: UInt32    = 0x0000_0400
-    static let rThumbstickUp: UInt32  = 0x0000_1000   // (v)
-    static let rThumbstickDown: UInt32 = 0x0000_2000  // (v)
-    static let rThumbstickLeft: UInt32 = 0x0000_4000  // (v)
-    static let rThumbstickRight: UInt32 = 0x0000_8000 // (v)
-    static let start: UInt32          = 0x0010_0000
-    static let back: UInt32           = 0x0020_0000
-    static let rIndexTrigger: UInt32  = 0x0400_0000   // (v)
-    static let rHandTrigger: UInt32   = 0x0800_0000   // (v)
-    static let lIndexTrigger: UInt32  = 0x1000_0000   // (v)
-    static let lHandTrigger: UInt32   = 0x2000_0000   // (v)
-}
 
 /// The wrist frame ARKit reports, expressed in the grip frame the guest wants.
 ///
@@ -456,6 +391,15 @@ struct KLSenseTune {
 }
 
 final class KleptonControllers {
+    // Frozen for this gameplay session. Launcher changes apply to the next start.
+    let mode = KleptonControllerMode.selected()
+    private let surreal = KleptonSurrealBackend.shared
+
+    init() {
+        surreal.setSettings(.stored())
+        surreal.setEnabled(mode == .surreal)
+    }
+
     // 0 = left, 1 = right, matching kl_ovrp's hand indices (nodes 3 and 4).
     private var state: [KleptonHandState] = [KleptonHandState(), KleptonHandState()]
 
@@ -506,6 +450,7 @@ final class KleptonControllers {
     /// back here to read it anyway. Cheap: an array compare of a list that is
     /// almost always empty or two long.
     func spatialControllersChanged() -> Bool {
+        guard mode == .standard else { return false }
         let now = Self.spatialControllers()
         guard now != tracked else { return false }
         tracked = now
@@ -522,6 +467,7 @@ final class KleptonControllers {
     /// session is simply re-`run()` with a rebuilt list when the set changes
     /// (`spatialControllersChanged`), without stopping it first.
     func makeAccessoryProvider() async -> (any DataProvider)? {
+        guard mode == .standard else { return nil }
         guard #available(visionOS 26.0, *), AccessoryTrackingProvider.isSupported else { return nil }
         let spatial = Self.spatialControllers()
         tracked = spatial
@@ -1661,6 +1607,10 @@ final class KleptonControllers {
             var amplitude: Float = 0, seconds: Float = 0
             let live = kl_ovrp_haptics_pull(Int32(hand), &amplitude, &seconds) != 0
             guard Self.hapticsEnabled else { continue }
+            if mode == .surreal {
+                if live { surreal.vibrate(hand: hand, amplitude: amplitude, duration: seconds) }
+                continue
+            }
             let level = live ? min(max(amplitude * Self.gain, 0), 1) : 0
             traceBurst(hand: hand, level: level, at: now)
             // Hand the level to the haptics queue without ever waiting on it.
@@ -2235,6 +2185,7 @@ final class KleptonControllers {
     /// guest's index trigger means "the user is selecting", which is what an
     /// indirect pinch is.
     func handleSpatialEvents(_ events: SpatialEventCollection) {
+        guard mode == .standard else { return }
         if Self.discretePinch { handleDiscreteSpatialEvents(events); return }
         for e in events {
             guard e.kind == .indirectPinch else { continue }
@@ -2279,7 +2230,25 @@ final class KleptonControllers {
     /// pose here is predicted to it, so the controllers move at display rate
     /// and describe the same instant the head pose does.
     func update(leftHand: HandAnchor?, rightHand: HandAnchor?,
-                at presentationTime: TimeInterval) {
+                at presentationTime: TimeInterval, headTransform: simd_float4x4? = nil) {
+        if mode == .surreal {
+            let handPositionOnly = surreal.snapshot().settings.positionFromHands
+            let alignmentTarget = headTransform.flatMap { SurrealControllerOrientation.forward(head: $0) }
+            for hand in 0...1 {
+                let anchor = hand == 0 ? leftHand : rightHand
+                var reference: simd_float4x4?
+                if let anchor, anchor.isTracked {
+                    let (p, q) = gripPose(anchor, hand: hand)
+                    // In hybrid mode only p crosses the seam. No wrist angle
+                    // can steer the controller, including its initial alignment.
+                    var m = handPositionOnly ? matrix_identity_float4x4 : simd_float4x4(q)
+                    m.columns.3 = SIMD4(p, 1)
+                    reference = m
+                }
+                submit(surreal.sample(hand: hand, reference: reference, at: presentationTime, alignmentTarget: alignmentTarget), hand: hand)
+            }
+            return
+        }
         pollButtons()
         pollGamepad()
 
@@ -2443,20 +2412,25 @@ final class KleptonControllers {
                 continue
             }
 
-            if let p = st.position, let q = st.orientation {
-                kl_ovrp_set_hand_motion(Int32(hand), p.x, p.y, p.z,
-                                        q.imag.x, q.imag.y, q.imag.z, q.real,
-                                        st.linearVelocity.x, st.linearVelocity.y,
-                                        st.linearVelocity.z,
-                                        st.angularVelocity.x, st.angularVelocity.y,
-                                        st.angularVelocity.z)
-            }
-            kl_ovrp_set_controller_input(Int32(hand), st.buttons, st.touches,
-                                         st.indexTrigger, st.handTrigger,
-                                         st.stick.x, st.stick.y)
-
-            lock.lock(); state[hand] = st; lock.unlock()
+            submit(st, hand: hand)
         }
         reportPinch()
+    }
+
+    /// The common final Oculus seam for Standard and Surreal backends.
+    private func submit(_ st: KleptonHandState, hand: Int) {
+        if let p = st.position, let q = st.orientation {
+            kl_ovrp_set_hand_motion(Int32(hand), p.x, p.y, p.z,
+                                    q.imag.x, q.imag.y, q.imag.z, q.real,
+                                    st.linearVelocity.x, st.linearVelocity.y,
+                                    st.linearVelocity.z,
+                                    st.angularVelocity.x, st.angularVelocity.y,
+                                    st.angularVelocity.z)
+        }
+        kl_ovrp_set_controller_input(Int32(hand), st.buttons, st.touches,
+                                     st.indexTrigger, st.handTrigger,
+                                     st.stick.x, st.stick.y)
+
+        lock.lock(); state[hand] = st; lock.unlock()
     }
 }

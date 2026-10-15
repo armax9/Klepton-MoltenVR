@@ -261,7 +261,7 @@ struct KleptonApp: App {
     }
 
     var body: some Scene {
-        WindowGroup { BootView() }
+        WindowGroup(id: SurrealAimGuide.launcherID) { BootView() }
             .defaultSize(width: 1280, height: 800)
             // On the app's phase, not this window's: closing the boot window
             // while the immersive space is up is not backgrounding, and must
@@ -278,6 +278,9 @@ struct KleptonApp: App {
         WindowGroup(id: "kbentry") { KeyboardEntryView() }
             .defaultSize(width: 560, height: 240)
             .windowResizability(.contentSize)
+
+        ImmersiveSpace(id: SurrealAimGuide.spaceID) { KleptonSurrealAimSpace() }
+            .immersionStyle(selection: .constant(.mixed), in: .mixed)
 
         ImmersiveSpace(id: Immersive.id) {
             CompositorLayer(configuration: KleptonStageConfiguration()) { layerRenderer in
@@ -338,6 +341,7 @@ enum Paths {
 final class KLRun: ObservableObject {
     static let shared = KLRun()
     @Published var started = false
+    @Published var adjustingControllers = false
     @Published var up = false
     private var openWindow: OpenWindowAction?
     private var keyboard: Task<Void, Never>?
@@ -439,11 +443,13 @@ struct KeyboardEntryView: View {
 /// own hands show. All of it is read once when the game starts, which the page
 /// says once instead of under every control.
 struct PlayerSettingsView: View {
+    @AppStorage(KleptonControllerMode.preferenceKey) private var controllerMode = KleptonControllerMode.selected().rawValue
     @ObservedObject private var rendering = KleptonRendering.shared
     @ObservedObject private var chroma = KleptonChroma.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            KleptonControllerSettingsView()
             // Alyx has its own page for the picture (AlyxPanel), with one choice
             // where this has two dials; both at once were two places to set the
             // same thing. These two stay reachable under Advanced.
@@ -554,6 +560,7 @@ struct PlayerSettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            if controllerMode == KleptonControllerMode.standard.rawValue {
             GroupBox(klT("Game controller", "Gamecontroller")) {
                 // Looked up again every two seconds: a controller is paired and
                 // switched on while this page is open as often as before it.
@@ -578,6 +585,7 @@ struct PlayerSettingsView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
             }
             Label(klT("Changes to the picture apply the next time you start the game.",
                       "Änderungen am Bild gelten ab dem nächsten Start des Spiels."),
@@ -870,7 +878,7 @@ struct BootView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.white)
                     .controlSize(.extraLarge)
-                    .disabled(started || (isLauncher && !files.canLaunch))
+                    .disabled(started || run.adjustingControllers || (isLauncher && !files.canLaunch))
                     Button {
                         showSettings = true
                     } label: {
@@ -1121,7 +1129,7 @@ struct BootView: View {
         // numbers stop being comparable to the host's. Disabling the button
         // while running is not enough: the run *finishes*, and the obvious
         // next thing to do with a finished run is press Boot again.
-        guard !running, !finished else { return }
+        guard !running, !finished, !KLRun.shared.adjustingControllers else { return }
         // Before configure rather than out of its failure: configure only
         // checks the APK and assets/, and a split-binary guest without its OBB
         // would pass it and then fail far away.

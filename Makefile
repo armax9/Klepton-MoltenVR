@@ -832,6 +832,17 @@ build/t_pinch: tests/t_pinch.swift visionos/Sources/KleptonPinch.swift
 	@mkdir -p build
 	swiftc -o $@ visionos/Sources/KleptonPinch.swift tests/t_pinch.swift
 
+# Hardware-independent tests for the actual shipped Surreal decoder, mapper and fusion.
+SURREAL_CORE := visionos/Sources/KleptonControllerInput.swift visionos/Sources/KleptonControllerMode.swift visionos/Sources/KleptonSurrealInput.swift visionos/Sources/KleptonSurrealAim.swift
+build/t_surreal: $(SURREAL_CORE) tests/t_surreal.swift
+	@mkdir -p build
+	swiftc -o $@ $(SURREAL_CORE) tests/t_surreal.swift
+
+.PHONY: surreal
+surreal: build/t_surreal
+	./build/t_surreal
+	python3 tests/t_surreal_project.py
+
 .PHONY: pinch
 pinch: build/t_pinch
 	./build/t_pinch
@@ -878,13 +889,14 @@ tgkill: build/t_tgkill
 # Each test writes to a log and is checked BEFORE the log is filtered. Piping a
 # test straight into tail/grep would hand make the filter's exit status instead
 # of the test's, so a failing test would leave the sweep green.
-check: build/t_opus build/t_variadic build/t_load build/t_il2cpp build/m_boot build/t_haptics build/t_hevc build/t_xrspace build/t_ovrplat build/t_posebound build/t_audioswitch build/t_sink2_audio build/t_xrinput build/t_softinput build/t_ctr build/t_mtxtable build/t_bcast build/t_fault build/t_glcaps build/t_x18race build/t_tgkill build/klepton-ld build/t_uevk build/t_jniobj build/t_fove build/t_mtlbusy build/t_metrics build/t_dl_ext build/t_jni_io build/t_jni_firebase build/t_jni_vivox build/t_jni_memory build/t_pinch build/t_arrayviews
+check: build/t_opus build/t_variadic build/t_load build/t_il2cpp build/m_boot build/t_haptics build/t_hevc build/t_xrspace build/t_ovrplat build/t_posebound build/t_audioswitch build/t_sink2_audio build/t_xrinput build/t_softinput build/t_ctr build/t_mtxtable build/t_bcast build/t_fault build/t_glcaps build/t_x18race build/t_tgkill build/klepton-ld build/t_uevk build/t_jniobj build/t_fove build/t_mtlbusy build/t_metrics build/t_dl_ext build/t_jni_io build/t_jni_firebase build/t_jni_vivox build/t_jni_memory build/t_pinch build/t_arrayviews build/t_surreal
 	@# The guest steps read $(TARGET)'s own files. Without them the loader steps print nothing and pass, and the
 	@# run ends at the il2cpp step with a bare "Error 1" - a check that looked green until its last line. A
 	@# working copy without the game's tree (a fresh git worktree) is told so here, before anything runs.
 	@test -f $(LIBS)/libil2cpp.so || { echo "check needs the guest it tests: $(LIBS)/libil2cpp.so is not here."; \
 	  echo "  Unpack $(TARGET) into this working copy (see BUILDING.md), link or clone the tree from another one,"; \
 	  echo "  or name a guest that is here: make check TARGET=<name>"; exit 1; }
+	@./build/t_surreal
 	@echo "=== variadic ABI ===" && ./build/t_variadic
 	@./build/t_x18race > build/x18race.log 2>&1 || { cat build/x18race.log; exit 1; }
 	@head -1 build/x18race.log && tail -1 build/x18race.log

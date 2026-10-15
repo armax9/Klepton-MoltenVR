@@ -244,6 +244,11 @@ if _rs_env:
         print(f"gen_xcodeproj: KLEPTON_RENDER_SCALE={_rs_env!r} is not a fraction in 0.5..1.0 "
               f"- the target's {RENDER_SCALE:.2f} stays", file=sys.stderr)
 
+# Typed wire values only: never interpolate arbitrary installer input into a project.
+CONTROLLER_MODE = os.environ.get("KLEPTON_CONTROLLER_MODE", "standard")
+if CONTROLLER_MODE not in ("standard", "surreal"):
+    raise ValueError("KLEPTON_CONTROLLER_MODE must be standard or surreal")
+
 # Compile-time launcher opt-in (also drives LAUNCHER_COND + the display name below).
 _launcher_on = _os.environ.get("KL_CUSTOM_LAUNCHER", "").strip().lower() in ("1", "true", "yes", "on")
 # NB: the bundle id is deliberately NOT switched by the launcher flag. It is a SIGNING
@@ -357,6 +362,7 @@ _usage_settings = "".join(
     '\t\t\t\tINFOPLIST_KEY_%s = "%s";\n' % (k, v.replace("\\", "\\\\").replace('"', '\\"'))
     for k, v in USAGE_DESCRIPTIONS.items())
 ASSETCATALOG_SETTING += _usage_settings
+ASSETCATALOG_SETTING += f'\t\t\t\tKL_CONTROLLER_MODE_DEFAULT = "{CONTROLLER_MODE}";\n'
 
 # Trim the asset catalog to THIS target. The shared Assets.xcassets holds one icon
 # stack per target (~26), and actool compiles ALL of them into the app's Assets.car
@@ -414,7 +420,10 @@ SWIFT = ["KleptonApp.swift", "KleptonCompositor.swift", "KleptonControllers.swif
          "KleptonAlyx.swift", "KleptonText.swift", "KleptonSteamCloud.swift",
          "KleptonBackup.swift", "KleptonMetrics.swift", "KleptonPinch.swift",
          "KleptonTestBuild.swift",
-         "KleptonArrayViews.swift"]
+         "KleptonArrayViews.swift",
+         "KleptonControllerInput.swift", "KleptonControllerMode.swift",
+         "KleptonSurrealInput.swift", "KleptonSurrealBackend.swift", "KleptonSurrealView.swift",
+         "KleptonSurrealAim.swift", "KleptonSurrealAimView.swift"]
 # Steam's connection, sign-in and Steam Cloud (SteamCloudKit/README.md: parts of
 # Glovebox's SteamLauncherKit, MIT), compiled into the app's own module. The
 # folder is a Swift package only so that its tests run on a Mac.

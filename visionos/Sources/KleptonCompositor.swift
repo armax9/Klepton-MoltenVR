@@ -695,7 +695,8 @@ final class KleptonCompositor {
         // Predicted to the presentation time, not "now": the pose the guest
         // renders with should be the pose the display will show it at, which is
         // the whole point of having a deadline to render against.
-        if let anchor = Self.usable(worldTracking.queryDeviceAnchor(atTimestamp: presentationTime)) {
+        let controllerHeadAnchor = Self.usable(worldTracking.queryDeviceAnchor(atTimestamp: presentationTime))
+        if let anchor = controllerHeadAnchor {
             // This is the pose the guest will render with, and kl_ovrp latches
             // it into the stage record when the guest reaches ovrp_BeginFrame —
             // which is what the composite pass reads back to know where the
@@ -752,7 +753,8 @@ final class KleptonCompositor {
             if let a = hands.leftHand,  a.isTracked { left  = a }
             if let a = hands.rightHand, a.isTracked { right = a }
         }
-        controllers.update(leftHand: left, rightHand: right, at: presentationTime)
+        controllers.update(leftHand: left, rightHand: right, at: presentationTime,
+                           headTransform: controllerHeadAnchor?.originFromAnchorTransform)
         // ...and the same seam in the other direction: whatever the guest
         // queued for the controllers to play. Here rather than inside `update`
         // because it has nothing to do with the anchors that call takes — it is

@@ -17,6 +17,8 @@
 	</array>
 	<key>KLApkName</key>
 	<string>$(KL_DATA_APK)</string>
+	<key>KLControllerModeDefault</key>
+	<string>$(KL_CONTROLLER_MODE_DEFAULT)</string>
 	<key>KLGamepadMap</key>
 	<string>$(KL_GAMEPAD_MAP)</string>
 	<key>KLHandMattingDefault</key>
