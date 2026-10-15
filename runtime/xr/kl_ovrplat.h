@@ -64,4 +64,15 @@ void kl_ovrplat_report(FILE *f);
 // process of its own (tests/t_ovrplat.c), never in a guest run.
 int kl_ovrplat_queue_selftest(FILE *f);
 
+// Whether the installation gave this title a list of its asset files
+// (KL_ASSET_FILES_PATH, or klepton-asset-files.txt in its files directory; see
+// kl_assetcfg.h). Where it did, the asset-file questions are answered from it
+// and the guest is told the device's language by default (kl_jni_services.c).
+// Where it did not, nothing changes for any title.
+int kl_ovrplat_asset_files_configured(void);
+
+// KL_PLAT_TRACE=1: whether the asset-file, language-pack and locale answers
+// are traced (default off). See kl_ovrplat.c.
+int kl_ovrplat_trace_on(void);
+
 #endif

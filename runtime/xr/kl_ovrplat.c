@@ -1,5 +1,6 @@
 // libovrplatformloader.so — see kl_ovrplat.h for why this is a replacement and
 // where the DRM line is drawn.
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +15,7 @@
 #include "guest/kl_driver.h"   // target name, for the per-target KL_PLAT_USER default
 #include "kl_env.h"
 #include "kl_ovrplat.h"
+#include "kl_assetcfg.h"
 
 #define KL_OVRPLAT_MAX 512
 static struct { const char *name; unsigned calls; int drm; } g_plat[KL_OVRPLAT_MAX];
@@ -255,14 +257,81 @@ static int plat_is_checkout(const char *name) {
 // disk, remembered in a file of ours beside them (klplat_langpack_current);
 // choosing one that is not there is an error, as before — nothing is fetched
 // from here, and nothing in this family is for sale.
+//
+// Marvel's Deadpool VR (x3240283705987790) has the same `<tag>.lang` voice
+// packs, loaded by libUE4.so, and greyed out every language but the one it
+// had loaded. It is the first title whose list comes from its INSTALLATION
+// rather than from a directory listing: the installer writes the store's own
+// asset id, file name and size of every pack (kl_assetcfg.h), and a pack is
+// installed only when its file is there at exactly that size. Any title with
+// such a list takes this path — the list is the installer's statement that
+// these files are the title's free asset files — and a title without one is
+// untouched. Downloads stay refused either way.
+static int klplat_asset_cfg_path(char *out, size_t cap) {
+    const char *env = getenv(KL_ASSETCFG_ENV);
+    if (env && env[0]) return snprintf(out, cap, "%s", env) < (int)cap;
+    const char *root = kl_jni_files_dir();
+    return root && root[0] && snprintf(out, cap, "%s/%s", root, KL_ASSETCFG_FILE) < (int)cap;
+}
+int kl_ovrplat_asset_files_configured(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *env = getenv(KL_ASSETCFG_ENV);
+        char path[PATH_MAX];
+        struct stat st;
+        int v = (env && env[0]) ||
+                (klplat_asset_cfg_path(path, sizeof path) && stat(path, &st) == 0 && S_ISREG(st.st_mode));
+        if (v) fprintf(stderr, "  [plat] asset files listed by the installation (%s): "
+                               "asset-file questions are answered from that list\n",
+                       env && env[0] ? KL_ASSETCFG_ENV : KL_ASSETCFG_FILE);
+        on = v;
+    }
+    return on;
+}
 static int plat_is_obb_langpack_target(void) {
     static int v = -1;
     if (v < 0) {
         const char *t = kl_driver_target_name();
-        v = kl_env_on("KL_PLAT_LANGPACK_LIST", t && (strcmp(t, "x5812519008825194") == 0 ||
-                                                     strcmp(t, "wrath2") == 0));
+        v = kl_env_on("KL_PLAT_LANGPACK_LIST", (t && (strcmp(t, "x5812519008825194") == 0 ||
+                                                      strcmp(t, "wrath2") == 0)) ||
+                                               kl_ovrplat_asset_files_configured());
     }
     return v;
+}
+
+// KL_PLAT_TRACE=1 — one line per DISTINCT asset-file, language-pack and locale
+// call the guest makes (name, arguments, our answer), and one per ovr_* name it
+// resolves. Off by default. A line already said is not said again, so a menu
+// that polls the same getter every frame costs one line; past
+// KLPLAT_TRACE_MAX distinct lines it goes quiet. This is how Deadpool VR's
+// language packs were found to hinge on the metadata and the path spelling.
+#define KLPLAT_TRACE_MAX 1024
+int kl_ovrplat_trace_on(void) {
+    static int v = -1;
+    if (v < 0) v = kl_env_on("KL_PLAT_TRACE", 0);
+    return v;
+}
+static void klplat_trace(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void klplat_trace(const char *fmt, ...) {
+    if (!kl_ovrplat_trace_on()) return;
+    char line[1400];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    uint64_t h = 14695981039346656037ull;
+    for (const unsigned char *c = (const unsigned char *)line; *c; c++) { h ^= *c; h *= 1099511628211ull; }
+    static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+    static uint64_t seen[KLPLAT_TRACE_MAX];
+    static int nseen, full;
+    int say = 1;
+    pthread_mutex_lock(&mu);
+    for (int i = 0; i < nseen && say; i++) if (seen[i] == h) say = 0;
+    if (say && nseen == KLPLAT_TRACE_MAX) { say = 0; if (!full) { full = 1; say = 2; } }
+    if (say == 1) seen[nseen++] = h;
+    pthread_mutex_unlock(&mu);
+    if (say == 1) fprintf(stderr, "  [plat-trace] %s\n", line);
+    else if (say == 2) fprintf(stderr, "  [plat-trace] (%d distinct lines; quiet from here)\n", KLPLAT_TRACE_MAX);
 }
 static int plat_is_langpack_target(void) {
     const char *t = kl_driver_target_name();
@@ -462,6 +531,7 @@ static uint64_t klplat_called(const char *name) {
 typedef struct {
     uint64_t id; char path[1024]; char tag[32];
     const char *status;          // "installed" or "available"
+    char meta[64];               // the store's metadata, from the installation's list; "" elsewhere
 } klplat_asset;
 // `str` is the STRING payload, for the messages whose managed wrapper is a
 // `Message<string>` — it is read through ovr_Message_GetString rather than
@@ -493,7 +563,8 @@ enum {
 // first time the slot carries a list, reused after, never freed — the same
 // lifetime as the slot itself. NULL `elems` for every other message.
 enum { KLPLAT_SLOT_FREE = 0, KLPLAT_SLOT_QUEUED, KLPLAT_SLOT_POPPED };
-#define KLPLAT_LANG_MAX 8              // language packs scanned, and per list
+#define KLPLAT_LANG_MAX KL_ASSETCFG_MAX // language packs per list (an installation's list)
+#define KLPLAT_LANG_SCAN_MAX 8         // ...and found by listing the OBB directory
 typedef struct klplat_msg {
     uint32_t type; uint64_t request; int32_t payload; const char *str; int err;
     int kind;
@@ -520,6 +591,11 @@ static pthread_mutex_t g_msg_mu = PTHREAD_MUTEX_INITIALIZER;
 // under g_msg_mu. Here because a list message copies them in as it is queued.
 static klplat_asset g_lang[KLPLAT_LANG_MAX];
 static int          g_nlang;
+// ...and, where the installation lists them (kl_assetcfg.h), every pack it
+// lists, installed or not, so a status question about one that is not on the
+// disk is answered "available" rather than refused. Under g_msg_mu.
+static klplat_asset g_lang_listed[KLPLAT_LANG_MAX];
+static int          g_nlang_listed;
 
 // A free slot, growing the pool by a block when there is none — up to
 // KLPLAT_MSG_MAX_BLOCKS, past which there is no slot (NULL). Under g_msg_mu.
@@ -699,6 +775,9 @@ static void *klplat_PopMessage(void) {
         out->state = KLPLAT_SLOT_POPPED;
     }
     pthread_mutex_unlock(&g_msg_mu);
+    if (out)
+        klplat_trace("ovr_PopMessage -> type 0x%08x request %llu payload %d err %d kind %d",
+                     out->type, (unsigned long long)out->request, out->payload, out->err, out->kind);
     return out;
 }
 
@@ -795,8 +874,82 @@ static const char *klplat_obb_lang_pkg(void) {
 // in one critical section. No handle the guest holds points into g_lang: a
 // list message carries its own copy (klplat_enqueue_lang_list), as a status
 // message does.
+//
+// Where the installation lists the packs (kl_ovrplat_asset_files_configured), the list
+// is that one instead of the directory's: the store's ids, and installed only
+// at exactly the listed size (klplat_read_asset_cfg).
+// A file under the guest's files directory, in the guest's own spelling:
+// /sdcard/<rest>. That directory IS the guest's external storage (kl_jni.c maps
+// /sdcard and its aliases onto it), and /sdcard/Android/obb/<package>/de.lang
+// is the path the platform reports on a headset. Unreal's Android file layer
+// takes an asset file's path as a pak to mount only when it begins with
+// GOBBFilePathBase/Android/obb/<package> (GOBBFilePathBase being /sdcard, the
+// answer to getExternalStorageDirectory); any other absolute path it appends
+// to its own Content/Paks directory. Deadpool VR then mounted nothing, offered
+// German and played no voice at all (2026-10-16). Anything outside the files
+// directory is left as it is.
+static void klplat_guest_spelling(char *path, size_t cap) {
+    const char *root = kl_jni_files_dir();
+    size_t rl = root ? strlen(root) : 0;
+    while (rl > 1 && root[rl - 1] == '/') rl--;
+    if (!rl || strncmp(path, root, rl) != 0 || path[rl] != '/') return;
+    char out[1024];
+    if (snprintf(out, sizeof out, "/sdcard%s", path + rl) >= (int)sizeof out) return;
+    snprintf(path, cap, "%s", out);
+}
+static int klplat_read_asset_cfg(klplat_asset *found, klplat_asset *listed, int *nlisted) {
+    *nlisted = 0;
+    kl_assetcfg_entry *e = calloc(KL_ASSETCFG_MAX, sizeof *e);
+    char path[PATH_MAX];
+    if (!e || !klplat_asset_cfg_path(path, sizeof path)) { free(e); return 0; }
+    // Rejected lines are said the first time, not at every rescan.
+    static int logged;
+    int m = kl_assetcfg_load(path, kl_jni_obb_dir(), e, KL_ASSETCFG_MAX, logged ? NULL : stderr);
+    if (m < 0 && !logged)
+        fprintf(stderr, "  [plat] asset-file list %s cannot be read (or the OBB directory %s is "
+                        "not absolute): no asset files reported\n", path, kl_jni_obb_dir());
+    logged = 1;
+    int n = 0;
+    for (int i = 0; i < m; i++) {
+        klplat_asset *a = &listed[(*nlisted)++];
+        memset(a, 0, sizeof *a);
+        a->id = e[i].id;
+        snprintf(a->path, sizeof a->path, "%s", e[i].path);
+        klplat_guest_spelling(a->path, sizeof a->path);
+        snprintf(a->tag, sizeof a->tag, "%s", e[i].tag);
+        snprintf(a->meta, sizeof a->meta, "%s", e[i].meta);
+        a->status = e[i].installed ? "installed" : "available";
+        if (e[i].installed) found[n++] = *a;
+    }
+    free(e);
+    return n;
+}
 static int klplat_scan_obb_langpacks(void) {
-    klplat_asset found[KLPLAT_LANG_MAX];
+    if (kl_ovrplat_asset_files_configured()) {
+        klplat_asset *found = calloc(2 * KLPLAT_LANG_MAX, sizeof *found);
+        if (!found) return 0;
+        klplat_asset *listed = found + KLPLAT_LANG_MAX;
+        int nlisted, n = klplat_read_asset_cfg(found, listed, &nlisted);
+        static int said_n = -1, said_listed = -1;
+        int say = 0;
+        pthread_mutex_lock(&g_msg_mu);
+        for (int i = 0; i < n; i++) g_lang[i] = found[i];
+        g_nlang = n;
+        for (int i = 0; i < nlisted; i++) g_lang_listed[i] = listed[i];
+        g_nlang_listed = nlisted;
+        if (said_n != n || said_listed != nlisted) { said_n = n; said_listed = nlisted; say = 1; }
+        pthread_mutex_unlock(&g_msg_mu);
+        if (say)
+            for (int i = 0; i < nlisted; i++)
+                fprintf(stderr, "  [plat] asset file %llu '%s' (%s): %s\n",
+                        (unsigned long long)listed[i].id, listed[i].path, listed[i].tag,
+                        strcmp(listed[i].status, "installed") == 0
+                            ? "on disk at the listed size -> installed"
+                            : "not on disk at the listed size -> not installed (it cannot be fetched from here)");
+        free(found);
+        return n;
+    }
+    klplat_asset found[KLPLAT_LANG_SCAN_MAX];
     int n = 0;
     const char *root = kl_jni_files_dir();
     char dir[PATH_MAX];
@@ -839,20 +992,22 @@ static int klplat_scan_obb_langpacks(void) {
 }
 // A status request about one of them: the details ride on the message, as for
 // batman. A name or id that is not one of these files is not a language pack,
-// and the refusal stands.
+// and the refusal stands. A pack the installation lists that is not on the
+// disk at its size is "available": not installed, and not fetched from here.
+static int klplat_langpack_is(const klplat_asset *a, const char *name, uint64_t id) {
+    const char *base = strrchr(a->path, '/');
+    return name ? (base && strcmp(base + 1, name) == 0) : a->id == id;
+}
 static uint64_t klplat_obb_langpack_status(const char *what, uint32_t type,
                                            const char *name, uint64_t id) {
     klplat_scan_obb_langpacks();
     klplat_asset a;
     int have = 0;
     pthread_mutex_lock(&g_msg_mu);
-    for (int i = 0; i < g_nlang && !have; i++) {
-        const char *base = strrchr(g_lang[i].path, '/');
-        if (name ? (base && strcmp(base + 1, name) == 0) : g_lang[i].id == id) {
-            a = g_lang[i];
-            have = 1;
-        }
-    }
+    for (int i = 0; i < g_nlang && !have; i++)
+        if (klplat_langpack_is(&g_lang[i], name, id)) { a = g_lang[i]; have = 1; }
+    for (int i = 0; i < g_nlang_listed && !have; i++)
+        if (klplat_langpack_is(&g_lang_listed[i], name, id)) { a = g_lang_listed[i]; have = 1; }
     pthread_mutex_unlock(&g_msg_mu);
     if (!have) return klplat_drm(what);
     return klplat_request_asset(what, type, KLPLAT_KIND_NONE, &a);
@@ -899,12 +1054,14 @@ static uint64_t klplat_LanguagePack_GetCurrent(void) {
     klplat_asset a;
     int have = klplat_langpack_current(&a);
     fprintf(stderr, "  [plat] current language pack: %s\n", have ? a.tag : "none");
+    klplat_trace("ovr_LanguagePack_GetCurrent() -> %s", have ? a.tag : "none");
     // With none, the completion still succeeds and its language tag reads "".
     return klplat_request_asset("ovr_LanguagePack_GetCurrent", KLPLAT_MSG_LANGPACK_GET_CURRENT,
                                 KLPLAT_KIND_NONE, have ? &a : NULL);
 }
 static uint64_t klplat_LanguagePack_SetCurrent(const char *tag) {
     plat_hit("ovr_LanguagePack_SetCurrent");
+    klplat_trace("ovr_LanguagePack_SetCurrent(\"%s\")", tag ? tag : "(null)");
     if (!plat_is_obb_langpack_target() || !tag || !tag[0] || strlen(tag) > 31 || strpbrk(tag, "/ \t\r\n"))
         return klplat_request_err("ovr_LanguagePack_SetCurrent", KLPLAT_MSG_LANGPACK_SET_CURRENT);
     klplat_scan_obb_langpacks();
@@ -929,15 +1086,21 @@ static uint64_t klplat_LanguagePack_SetCurrent(const char *tag) {
 }
 static uint64_t klplat_Message_GetAssetFileDownloadResult(const klplat_msg *m) {
     plat_hit("ovr_Message_GetAssetFileDownloadResult");
+    klplat_trace("ovr_Message_GetAssetFileDownloadResult(request %llu, kind %d)",
+                 m ? (unsigned long long)m->request : 0ull, m ? m->kind : -1);
     return m && m->kind == KLPLAT_KIND_LANGPACK_SET ? (uint64_t)(uintptr_t)m->obj : 0;
 }
 static uint64_t klplat_AssetFileDownloadResult_GetAssetId(const klplat_asset *a) {
     plat_hit("ovr_AssetFileDownloadResult_GetAssetId");
-    return a ? a->id : 0;
+    uint64_t r = a ? a->id : 0;
+    klplat_trace("ovr_AssetFileDownloadResult_GetAssetId(id %llu %s) -> %llu", a ? (unsigned long long)a->id : 0ull, a ? a->tag : "NULL", (unsigned long long)r);
+    return r;
 }
 static const char *klplat_AssetFileDownloadResult_GetFilepath(const klplat_asset *a) {
     plat_hit("ovr_AssetFileDownloadResult_GetFilepath");
-    return a ? a->path : "";
+    const char *r = a ? a->path : "";
+    klplat_trace("ovr_AssetFileDownloadResult_GetFilepath(id %llu %s) -> \"%s\"", a ? (unsigned long long)a->id : 0ull, a ? a->tag : "NULL", r);
+    return r;
 }
 
 static uint64_t klplat_langpack_StatusByName(const char *name) {
@@ -973,44 +1136,65 @@ static uint64_t klplat_langpack_StatusByName(const char *name) {
 }
 static uint64_t klplat_langpack_Message_GetAssetDetails(const klplat_msg *m) {
     plat_hit("ovr_Message_GetAssetDetails");
-    return (uint64_t)(uintptr_t)(m ? m->obj : NULL);
+    const klplat_asset *a = m ? m->obj : NULL;
+    klplat_trace("ovr_Message_GetAssetDetails(request %llu) -> %s (id %llu %s)",
+                 m ? (unsigned long long)m->request : 0ull, a ? "details" : "NULL",
+                 a ? (unsigned long long)a->id : 0ull, a ? a->status : "");
+    return (uint64_t)(uintptr_t)a;
 }
 static uint64_t klplat_langpack_GetAssetId(const klplat_asset *a) {
     plat_hit("ovr_AssetDetails_GetAssetId");
-    return a ? a->id : 0;
+    uint64_t r = a ? a->id : 0;
+    klplat_trace("ovr_AssetDetails_GetAssetId(id %llu %s) -> %llu", a ? (unsigned long long)a->id : 0ull, a ? a->tag : "NULL", (unsigned long long)r);
+    return r;
 }
 static const char *klplat_langpack_GetAssetType(const klplat_asset *a) {
     plat_hit("ovr_AssetDetails_GetAssetType");
     (void)a;
-    return "language_pack";
+    const char *r = "language_pack";
+    klplat_trace("ovr_AssetDetails_GetAssetType(id %llu %s) -> \"%s\"", a ? (unsigned long long)a->id : 0ull, a ? a->tag : "NULL", r);
+    return r;
 }
 static const char *klplat_langpack_GetDownloadStatus(const klplat_asset *a) {
     plat_hit("ovr_AssetDetails_GetDownloadStatus");
-    return a ? a->status : "available";
+    const char *r = a ? a->status : "available";
+    klplat_trace("ovr_AssetDetails_GetDownloadStatus(id %llu %s) -> \"%s\"", a ? (unsigned long long)a->id : 0ull, a ? a->tag : "NULL", r);
+    return r;
 }
 static const char *klplat_langpack_GetFilepath(const klplat_asset *a) {
     plat_hit("ovr_AssetDetails_GetFilepath");
-    return a ? a->path : "";
+    const char *r = a ? a->path : "";
+    klplat_trace("ovr_AssetDetails_GetFilepath(id %llu %s) -> \"%s\"", a ? (unsigned long long)a->id : 0ull, a ? a->tag : "NULL", r);
+    return r;
 }
 // Not for sale, so there is no purchase to have or lack.
 static const char *klplat_langpack_GetIapStatus(const klplat_asset *a) {
     plat_hit("ovr_AssetDetails_GetIapStatus");
     (void)a;
-    return "free";
+    const char *r = "free";
+    klplat_trace("ovr_AssetDetails_GetIapStatus(id %llu %s) -> \"%s\"", a ? (unsigned long long)a->id : 0ull, a ? a->tag : "NULL", r);
+    return r;
 }
 // The language handle is the details: tag and both names are the locale.
 static uint64_t klplat_AssetDetails_GetLanguage(const klplat_asset *a) {
     plat_hit("ovr_AssetDetails_GetLanguage");
-    return (uint64_t)(uintptr_t)a;
+    uint64_t r = (uint64_t)(uintptr_t)a;
+    klplat_trace("ovr_AssetDetails_GetLanguage(id %llu %s) -> %p", a ? (unsigned long long)a->id : 0ull, a ? a->tag : "NULL", (void *)(uintptr_t)r);
+    return r;
 }
+// The store's metadata of the file where the installation's list gives it
+// (meta=, kl_assetcfg.h); "" for every pack that list does not describe.
 static const char *klplat_langpack_GetMetadata(const klplat_asset *a) {
     plat_hit("ovr_AssetDetails_GetMetadata");
-    (void)a;
-    return "";
+    const char *r = a ? a->meta : "";
+    klplat_trace("ovr_AssetDetails_GetMetadata(id %llu %s) -> \"%s\"", a ? (unsigned long long)a->id : 0ull, a ? a->tag : "NULL", r);
+    return r;
 }
 static const char *klplat_LanguagePackInfo_tag(const klplat_asset *a) {
     plat_hit("ovr_LanguagePackInfo_Get*");
-    return a ? a->tag : "";
+    const char *r = a ? a->tag : "";
+    klplat_trace("ovr_LanguagePackInfo_Get*(id %llu %s) -> \"%s\"", a ? (unsigned long long)a->id : 0ull, a ? a->tag : "NULL", r);
+    return r;
 }
 static uint64_t klplat_Message_GetRequestID(const klplat_msg *m) {
     plat_hit("ovr_Message_GetRequestID");
@@ -1753,7 +1937,9 @@ static uint64_t klplat_AssetFile_GetList(void) {
     plat_hit("ovr_AssetFile_GetList");
     if (plat_is_obb_langpack_target()) {
         klplat_scan_obb_langpacks();
-        return klplat_request_lang_list("ovr_AssetFile_GetList", KLPLAT_MSG_ASSET_LIST);
+        uint64_t r = klplat_request_lang_list("ovr_AssetFile_GetList", KLPLAT_MSG_ASSET_LIST);
+        klplat_trace("ovr_AssetFile_GetList() -> request %llu", (unsigned long long)r);
+        return r;
     }
     klplat_scan_courses();
     return klplat_request_kind("ovr_AssetFile_GetList", KLPLAT_MSG_ASSET_LIST,
@@ -1761,6 +1947,7 @@ static uint64_t klplat_AssetFile_GetList(void) {
 }
 
 static uint64_t klplat_AssetFile_StatusByName(const char *name) {
+    klplat_trace("ovr_AssetFile_StatusByName(\"%s\")", name ? name : "(null)");
     // batman asks this about its language packs, Walkabout about its courses.
     if (plat_is_langpack_target()) return klplat_langpack_StatusByName(name);
     plat_hit("ovr_AssetFile_StatusByName");
@@ -1775,6 +1962,7 @@ static uint64_t klplat_AssetFile_StatusByName(const char *name) {
 
 static uint64_t klplat_AssetFile_StatusById(uint64_t id) {
     plat_hit("ovr_AssetFile_StatusById");
+    klplat_trace("ovr_AssetFile_StatusById(%llu)", (unsigned long long)id);
     if (plat_is_obb_langpack_target())
         return klplat_obb_langpack_status("ovr_AssetFile_StatusById",
                                           KLPLAT_MSG_ASSET_STATUS_ID, NULL, id);
@@ -1789,8 +1977,10 @@ static uint64_t klplat_AssetFile_StatusById(uint64_t id) {
 
 static uint64_t klplat_AssetDetailsArray_GetSize(const klplat_msg *m) {
     plat_hit("ovr_AssetDetailsArray_GetSize");
-    if (!m || m->kind != KLPLAT_KIND_ASSETS || m->payload < 0) return 0;
-    return (uint64_t)m->payload;
+    uint64_t r = !m || m->kind != KLPLAT_KIND_ASSETS || m->payload < 0 ? 0 : (uint64_t)m->payload;
+    klplat_trace("ovr_AssetDetailsArray_GetSize(request %llu) -> %llu",
+                 m ? (unsigned long long)m->request : 0ull, (unsigned long long)r);
+    return r;
 }
 
 static void *klplat_AssetDetailsArray_GetElement(const klplat_msg *m, int index) {
@@ -1799,8 +1989,12 @@ static void *klplat_AssetDetailsArray_GetElement(const klplat_msg *m, int index)
     // A language-pack list answers out of its own copy, which nothing but a
     // reuse of the slot after ovr_FreeMessage ever writes — no lock to take,
     // and the handle stays good while the message is held.
-    if (m->elems)
-        return index >= 0 && index < m->payload ? (void *)(uintptr_t)&m->elems[index] : NULL;
+    if (m->elems) {
+        const klplat_asset *a = index >= 0 && index < m->payload ? &m->elems[index] : NULL;
+        klplat_trace("ovr_AssetDetailsArray_GetElement(request %llu, %d) -> %s",
+                     (unsigned long long)m->request, index, a ? a->tag : "NULL");
+        return (void *)(uintptr_t)a;
+    }
     if (plat_is_obb_langpack_target()) return NULL;
     if (index < 0 || index >= m->payload || index >= g_ncourses) return NULL;
     return &g_courses[index];
@@ -2983,9 +3177,22 @@ static uint64_t klplat_GetLoggedInUserID(void) {
 // ovrRequest), the locale the store would report for the signed-in user. There
 // is no platform user here, but the guest reads the string to pick a language,
 // and a NULL would crash the read — so answer the host's, defaulting to en_US.
+//
+// On a headset nothing sets LANG. For a title whose installation lists its
+// asset files — language packs, chosen by the language it is told — the answer
+// is the one java.util.Locale and AConfiguration give (kl_jni_locale_parts:
+// the device's language where KL_LOCALE_DEVICE is on, else en_US), so the
+// platform and the engine do not name two languages. Every other title keeps
+// the LANG-only answer it always had.
 static uint64_t klplat_GetLoggedInUserLocale(void) {
     plat_hit("ovr_GetLoggedInUserLocale");
     static char loc[16];
+    const char *host = getenv("LANG");
+    if (!loc[0] && (!host || !host[0]) && kl_ovrplat_asset_files_configured()) {
+        char lang[16], country[16];
+        kl_jni_locale_parts(lang, sizeof lang, country, sizeof country);
+        snprintf(loc, sizeof loc, country[0] ? "%s_%s" : "%s", lang, country);
+    }
     if (!loc[0]) {
         const char *lang = getenv("LANG");            // e.g. "en_US.UTF-8"
         int i = 0;
@@ -2993,6 +3200,7 @@ static uint64_t klplat_GetLoggedInUserLocale(void) {
         if (i == 0) { loc[0]='e'; loc[1]='n'; loc[2]='_'; loc[3]='U'; loc[4]='S'; i=5; }
         loc[i] = '\0';
     }
+    klplat_trace("ovr_GetLoggedInUserLocale() -> \"%s\"", loc);
     return (uint64_t)(uintptr_t)loc;
 }
 
@@ -3227,9 +3435,22 @@ void *kl_ovrplat_dlopen(const char *soname) {
 
 int kl_ovrplat_is_handle(const void *h) { return h == (const void *)g_plat_handle; }
 
+static void *klplat_sym(const char *name, int s);
 void *kl_ovrplat_sym(const char *name) {
     if (!name) return NULL;
     int s = plat_slot(name);                    // resolved, whatever happens next
+    void *fn = klplat_sym(name, s);
+    if (strncmp(name, "ovr_", 4) == 0) {
+        int impl = 0;
+        for (size_t i = 0; i < sizeof g_plat_impl / sizeof g_plat_impl[0] && !impl; i++)
+            impl = strcmp(g_plat_impl[i].name, name) == 0;
+        klplat_trace("resolve %s -> %s", name,
+                     plat_is_drm(name) ? "REFUSED (aborts if called)" :
+                     impl ? "answered" : "generic stub (unimplemented ones abort if called)");
+    }
+    return fn;
+}
+static void *klplat_sym(const char *name, int s) {
 
     // Classified at *resolve* time as well as call time, so kl_ovrplat_report can
     // show what the guest went looking for even on a run where nothing aborted.
