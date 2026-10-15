@@ -581,6 +581,130 @@ final class KleptonCompositor {
     /// again with a rebuilt list. That is not a restart — the session is not
     /// stopped first, world and hand tracking carry straight on, and this is
     /// how reconnects are meant to be handled.
+    /// The real room for a guest that asks for one (kl_ovrp's emulated room,
+    /// KL_OVRP_SCENE_ROOM — Synth Riders' mixed-reality mode): visionOS's plane
+    /// detection, floor, ceiling and walls handed to kl_ovrp_scene_planes. In a
+    /// session of its own, so that a refused world-sensing permission or a
+    /// provider that will not start costs the room and never the head. Planes
+    /// arrive in ARKit's world space, the space the head pose is published in.
+    private static var roomSession: ARKitSession?
+    private static func startRoomPlanes() {
+        guard roomSession == nil, kl_ovrp_scene_wanted() != 0 else { return }
+        guard PlaneDetectionProvider.isSupported else {
+            NSLog("[cp] room: plane detection is not supported here — the guest gets a box")
+            return
+        }
+        let session = ARKitSession()
+        roomSession = session
+        Task.detached {
+            let auth = await session.requestAuthorization(for: [.worldSensing])
+            guard auth[.worldSensing] == .allowed else {
+                NSLog("[cp] room: world sensing not allowed (\(String(describing: auth[.worldSensing]))) — the guest gets a box")
+                return
+            }
+            let planes = PlaneDetectionProvider(alignments: [.horizontal, .vertical])
+            do {
+                try await session.run([planes])
+            } catch {
+                NSLog("[cp] room: plane detection failed to start: \(error) — the guest gets a box")
+                return
+            }
+            NSLog("[cp] room: plane detection running")
+            var seen: [UUID: PlaneAnchor] = [:]
+            for await update in planes.anchorUpdates {
+                switch update.event {
+                case .added, .updated: seen[update.anchor.id] = update.anchor
+                case .removed: seen[update.anchor.id] = nil
+                }
+                publishRoomPlanes(Array(seen.values))
+            }
+        }
+    }
+
+    /// Where the plane lies in ARKit's extent frame (originFromAnchor ·
+    /// anchorFromExtent) is not written down in the SDK, and the two readings
+    /// differ by a quarter turn: a floor taken the wrong way stands upright and
+    /// its outline has no area (Synth Riders: "ich bekomme einen 0x0x0 Raum",
+    /// 2026-10-15). So it is read off the planes themselves: whichever local axis
+    /// of the horizontal ones (floor, ceiling) points up is the normal — Z: the
+    /// plane is in XY, already the scene convention kl_ovrp answers in; Y: it is
+    /// in XZ and is turned (X stays, Y is -Z, Z is Y). Then each normal is made
+    /// to point into the room: up for a floor, down for a ceiling, towards the
+    /// floor's middle for a wall (a half turn about the plane's own Y otherwise).
+    private static let sceneFromXZPlane = simd_float4x4(columns: (
+        SIMD4<Float>(1, 0, 0, 0), SIMD4<Float>(0, 0, -1, 0),
+        SIMD4<Float>(0, 1, 0, 0), SIMD4<Float>(0, 0, 0, 1)))
+    private static let halfTurnY = simd_float4x4(diagonal: SIMD4<Float>(-1, 1, -1, 1))
+    private static var roomPlanesSaid = 0
+    private static func publishRoomPlanes(_ anchors: [PlaneAnchor]) {
+        var picked: [(kind: Int32, m: simd_float4x4, w: Float, h: Float)] = []
+        for a in anchors {
+            let kind: Int32
+            switch a.classification {
+            case .floor: kind = 0
+            case .ceiling: kind = 1
+            case .wall: kind = 2
+            default: continue
+            }
+            let e = a.geometry.extent
+            picked.append((kind, a.originFromAnchorTransform * e.anchorFromExtentTransform, e.width, e.height))
+        }
+        // The convention, by vote of the horizontal planes; XY where none is seen yet.
+        var zUp = 0, yUp = 0
+        for p in picked where p.kind != 2 {
+            let y = abs(p.m.columns.1.y), z = abs(p.m.columns.2.y)
+            if z > y { zUp += 1 } else { yUp += 1 }
+        }
+        let planeInXZ = yUp > zUp
+        var frames = picked.map { p -> (kind: Int32, m: simd_float4x4, w: Float, h: Float) in
+            (p.kind, planeInXZ ? p.m * sceneFromXZPlane : p.m, p.w, p.h)
+        }
+        let floorAt = frames.first(where: { $0.kind == 0 }).map { SIMD3($0.m.columns.3.x, $0.m.columns.3.y, $0.m.columns.3.z) }
+        let wallsMid: SIMD3<Float>? = {
+            let ws = frames.filter { $0.kind == 2 }
+            guard !ws.isEmpty else { return nil }
+            return ws.reduce(SIMD3<Float>(0, 0, 0)) { $0 + SIMD3($1.m.columns.3.x, $1.m.columns.3.y, $1.m.columns.3.z) } / Float(ws.count)
+        }()
+        let middle = floorAt ?? wallsMid ?? SIMD3<Float>(0, 0, 0)
+        for i in frames.indices {
+            let n = SIMD3(frames[i].m.columns.2.x, frames[i].m.columns.2.y, frames[i].m.columns.2.z)
+            let at = SIMD3(frames[i].m.columns.3.x, frames[i].m.columns.3.y, frames[i].m.columns.3.z)
+            let flip: Bool
+            switch frames[i].kind {
+            case 0: flip = n.y < 0
+            case 1: flip = n.y > 0
+            default:
+                var toMid = middle - at; toMid.y = 0
+                flip = simd_dot(SIMD3(n.x, 0, n.z), toMid) < 0
+            }
+            if flip { frames[i].m = frames[i].m * halfTurnY }
+        }
+        if roomPlanesSaid < 6, !frames.isEmpty {
+            roomPlanesSaid += 1
+            let desc = frames.map { f -> String in
+                let n = f.m.columns.2, p = f.m.columns.3
+                return String(format: "%@ %.1fx%.1f at (%.2f %.2f %.2f) n (%.2f %.2f %.2f)",
+                              ["floor", "ceiling", "wall"][Int(f.kind)], f.w, f.h, p.x, p.y, p.z, n.x, n.y, n.z)
+            }.joined(separator: "; ")
+            NSLog("[cp] room: planes in their %@ plane (%d:%d) — %@", planeInXZ ? "XZ" : "XY", yUp, zUp, desc)
+        }
+        var kinds: [Int32] = [], ms: [Float] = [], ext: [Float] = []
+        for f in frames {
+            for c in [f.m.columns.0, f.m.columns.1, f.m.columns.2, f.m.columns.3] {
+                ms.append(contentsOf: [c.x, c.y, c.z, c.w])
+            }
+            kinds.append(f.kind)
+            ext.append(contentsOf: [f.w, f.h])
+        }
+        kinds.withUnsafeBufferPointer { k in
+            ms.withUnsafeBufferPointer { m in
+                ext.withUnsafeBufferPointer { x in
+                    kl_ovrp_scene_planes(Int32(k.count), k.baseAddress, m.baseAddress, x.baseAddress)
+                }
+            }
+        }
+    }
+
     private func runARKit() async {
         do {
             // Hand tracking is requested separately because it is the half
@@ -599,6 +723,7 @@ final class KleptonCompositor {
             if let accessories { providers.append(accessories) }
             try await arSession.run(providers)
             arRunning = true
+            Self.startRoomPlanes()
             NSLog("[cp] ARKit running (hands: \(HandTrackingProvider.isSupported), "
                   + "sense: \(controllers.senseConnected))")
             if let accessories {

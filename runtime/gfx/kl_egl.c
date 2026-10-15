@@ -794,7 +794,10 @@ int kl_gl_cap_integerv(uint32_t pname, int32_t *params) {
     // way, so its menu panel was one magenta quad. A UI shader stores nothing; the
     // values are the ES 3.1 spec minimums, the least that keeps the 3.2 claim in
     // GL_VERSION consistent, and they are per target because every other title
-    // here was verified against the zeros.
+    // here was verified against the zeros. Synth Riders 3.6.6a1
+    // (x2436558143118760, Unity 6000; fix 39, sent in by a user) likewise: it
+    // played with magenta assets until it got these, confirmed on the sender's
+    // Vision Pro.
     {
         const char *t = kl_driver_target_name();
         // KL_GL_ES31_LIMITS=1: the same answer for any target, as an experiment
@@ -805,7 +808,8 @@ int kl_gl_cap_integerv(uint32_t pname, int32_t *params) {
         // ...and for a target whose compute kernels kl_glfb runs as transform
         // feedback (Beat Saber 1.45's FillMeshData): refused on the zeros, the
         // kernel never reaches the GL layer that would serve it.
-        if (es31_any || kl_glfb_compute_tf() || (t && strcmp(t, "x2544573735586536") == 0)) {
+        if (es31_any || kl_glfb_compute_tf() || (t && (strcmp(t, "x2544573735586536") == 0
+                                                       || strcmp(t, "x2436558143118760") == 0))) {
             static const struct { uint32_t pname; int32_t value; } es31[] = {
                 {0x8F38 /* MAX_IMAGE_UNITS                     */, 4},
                 {0x90D6 /* MAX_VERTEX_SHADER_STORAGE_BLOCKS    */, 4},

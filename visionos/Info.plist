@@ -82,7 +82,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Klepton uses the microphone only when you turn on the Microphone toggle, so a running app (such as Steam Link voice chat) can hear you.</string>
 	<key>NSWorldSensingUsageDescription</key>
-	<string>Klepton reads the headset's own pose, which is the head pose the guest renders from.</string>
+	<string>Klepton reads the headset's own pose, which is the head pose the guest renders from, and for a mixed-reality game the floor and walls of your room.</string>
 	<key>NSHandsTrackingUsageDescription</key>
 	<string>Klepton maps your hands onto the guest's two Touch controllers.</string>
 	<key>NSAccessoryTrackingUsageDescription</key>

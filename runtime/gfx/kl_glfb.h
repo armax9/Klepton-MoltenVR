@@ -130,7 +130,9 @@ void kl_glfb_program_binary_census(FILE *f);
 // klfb_rewrite_glsl emits different text.
 //
 //   1  the rewrite rules up to and including the per-stage int precision
-#define KL_GLFB_REWRITE_GEN 1
+//   2  KL_GLFB_VS_FINITE: a guarded main appended to vertex shaders (Synth
+//      Riders by default), 2026-10-15
+#define KL_GLFB_REWRITE_GEN 2
 
 // The eye-texture seam, texture identity out. kl_ovrp's SetupEyeTexture2 calls
 // this with the GL texture name Unity handed down; the capture finds "the

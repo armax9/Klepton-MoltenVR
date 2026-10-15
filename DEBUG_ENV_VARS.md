@@ -126,8 +126,8 @@ C `getenv` checks) turns the knob on, the default is off, and the reader is the
   no longer forced opaque — its alpha says where the room shows — and the black
   of `KL_MIXED_BLACK` is left out. Default 1 for TRIANGLE STRATEGY
   (`x5340130476095884`), Demeo (`x3634830803298285`), Richie's Plank Experience
-  (`x1642239225880682`) and LES MILLS BODYCOMBAT (`x4015163475201433`), 0 for
-  everyone else,
+  (`x1642239225880682`), Synth Riders (`x2436558143118760`) and LES MILLS BODYCOMBAT
+  (`x4015163475201433`), 0 for everyone else,
   who are told "unsupported" as before. A layer filed through
   `ovrp_EnqueueSubmitLayer2` (Unity) counts like one in `ovrp_EndFrame4`'s
   list. Log lines start `[ovrp] passthrough:`.
@@ -417,6 +417,22 @@ answers GL and kl_glfb never initializes.
 - `KL_GLFB_TEX_LIMIT=N` — perform only the first N `glTexSubImage2D` uploads
   and drop the rest; storage allocations still happen, so only texel contents
   go missing. Bisects the upload stream in situ. Default unlimited.
+- `KL_GLFB_VS_FINITE=0|1` — (`runtime/gfx/kl_glfb.c`) every ES 3 vertex shader
+  gets a guard: a clip position that is not finite (checked by its bits:
+  infinity or NaN) is moved outside the view. Where a Quest's GPU drops such a
+  triangle, Apple's draws it. Default 0: tried for Synth Riders' green line
+  (its pooled rails at song start) and it did not remove it (2026-10-15).
+- `KL_GLFB_DUMP_MATCH=<text>` — print the guest's own source of every shader
+  containing `<text>` to the log (at most 8). With `KL_GLFB_PROGRAM_BINARY=0`
+  for a guest that loads its programs from a binary cache.
+- `KL_GLFB_SKIP_VFX=0|1` — (`runtime/gfx/kl_glfb.c`) leave out the draws of
+  Unity VFX Graph output shaders (a shader source, active uniform or uniform
+  block naming `attributeBuffer`, `deadListIn/Out`, `elementToVFXBuffer` or
+  `graphValuesBuffer`). VFX Graph fills its particle buffers with compute
+  kernels, which ES 3.0 ANGLE cannot run, so its effects draw from buffers
+  nothing initialised: stray lines and triangles. Default 1 for Synth Riders
+  (`x2436558143118760`), else 0. Log lines start `[glfb] program … is a VFX
+  Graph shader`.
 - `KL_GLFB_SKIP=<names>` — comma-separated GL entry points handed back to the
   null driver, so the ANGLE path is bisectable by family without a rebuild.
   Diagnostic only; the frame is wrong by construction.
@@ -801,12 +817,20 @@ The guest's own memory management, and the three seams that used to disable it.
   uses the location it is told for a sampler as the texture unit; with the
   linker's own numbering that can be 32 or more, which the engine refuses
   ("Invalid texture unit!") — text as filled boxes. Default 1 for
-  `x2773034772778845` (Premium Bowling, Unity 6000.3.22f1),
-  `x2582932495064035` (Real VR Fishing, as its fix was sent in) and
-  `x4015163475201433` (LES MILLS BODYCOMBAT, every TextMeshPro glyph a block)
-  and `x2285803881494677` (Gun Club VR: black gun materials and repeated
+  `x2773034772778845` (Premium Bowling, Unity 6000.3.22f1) and
+  `x2582932495064035` (Real VR Fishing, as its fix was sent in),
+  `x2436558143118760` (Synth Riders), `x4015163475201433` (LES MILLS
+  BODYCOMBAT, every TextMeshPro glyph a block) and
+  `x2285803881494677` (Gun Club VR: black gun materials and repeated
   invalid texture-unit errors, surface detail with the pins, as its fix was
   sent in), else 0.
+- `KL_GLFB_TEX_MS_ANGLE=0|1` — (`runtime/gfx/kl_glfb.c`) serve the guest's
+  `glTexStorage2DMultisample` (ES 3.1) through ANGLE's
+  `glTexStorage2DMultisampleANGLE`, which an ES 3.0 context accepts. Without
+  it the core call is refused, the multisampled texture has no storage, and a
+  framebuffer that renders into it is `INCOMPLETE_ATTACHMENT`: every draw is
+  dropped. Default 1 for `x2436558143118760` (Synth Riders, Unity
+  6000.3.13f1: its camera colour target, both eyes black), else 0. (Fix 42.)
 - `KL_FS_JAR_FILE=0|1` — a path of the form `jar:file:///…` with no `!/`
   entry part is read as the plain path it wraps; Unity's Android file layer
   strips that scheme itself. Default 1 for `x3635172946605196` (BRINK
@@ -3385,6 +3409,7 @@ except its own control vars (next section).
   Without it the loop goes on calling an engine that has stopped drawing, and
   a game quit from its own menu leaves its last picture standing until the app
   is closed by hand. Default 1 for `x2582932495064035` (Real VR Fishing) and
+  `x2436558143118760` (Synth Riders) and
   `x2285803881494677` (Gun Club VR, with `KL_UNITY_QUIT_TEARDOWN`), else 0: no
   other game has been watched answering false. Not on the `KL_SYNC_GUEST` path.
 - `KL_UNITY_QUIT_TEARDOWN=0|1` — (`runtime/guest/kl_driver.c`) when

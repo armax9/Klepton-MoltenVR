@@ -1019,9 +1019,12 @@ static unsigned g_shader_pins_n;
 // Real VR Fishing (x2582932495064035) is the second, on its sender's word: the
 // fix that turned the pins on for it names texture faults among its reasons
 // and was run on a headset that way (fix 37, 2026-10-14; not run here).
-// LES MILLS BODYCOMBAT (x4015163475201433) the third: 466k
+// Synth Riders (x2436558143118760, Unity 6000.3.13f1) the third: samplers at
+// 169..177, 190k "Invalid texture unit!" a run, its hand-calibration orbs
+// missing and stray shapes in the menu (headset, 2026-10-15).
+// LES MILLS BODYCOMBAT (x4015163475201433) the fourth: the same 466k
 // "Invalid texture unit!" in one session and every TextMeshPro glyph a block.
-// Gun Club VR (x2285803881494677) the fourth: black gun materials and repeated
+// Gun Club VR (x2285803881494677) the fifth: black gun materials and repeated
 // "Invalid texture unit!", surface detail on the gun with the pins on (fix 44,
 // 2026-10-15, its sender's screenshots; not run here).
 static int klfb_bind_pins(void) {
@@ -1031,6 +1034,7 @@ static int klfb_bind_pins(void) {
         const char *t = kl_driver_target_name();
         v = kl_env_on("KL_GLFB_BIND_PINS", t && (strcmp(t, "x2773034772778845") == 0 ||
                                                  strcmp(t, "x2582932495064035") == 0 ||
+                                                 strcmp(t, "x2436558143118760") == 0 ||
                                                  strcmp(t, "x4015163475201433") == 0 ||
                                                  strcmp(t, "x2285803881494677") == 0));
     }
@@ -2437,6 +2441,30 @@ static void klfb_ShaderSource(uint32_t shader, int32_t count,
                 if (strings[i] && len) { memcpy(buf + off, strings[i], len); off += len; }
             }
             buf[off] = 0;
+            // KL_GLFB_DUMP_MATCH=<text>: print the guest's own source of every
+            // shader that contains <text> to the log, as it arrived (at most 8,
+            // each once). For reading one shader on the headset where there is
+            // no shader dump: Synth Riders' rail shader, by a property only it
+            // has (_UnspunPosition). A shader loaded from the guest's program
+            // binary cache never comes through here — KL_GLFB_PROGRAM_BINARY=0
+            // makes it compile from source.
+            {
+                static const char *match; static int init, dumped;
+                if (!init) { init = 1; match = kl_env_str("KL_GLFB_DUMP_MATCH", NULL); }
+                if (match && *match && dumped < 8 && strstr(buf, match)) {
+                    dumped++;
+                    fprintf(stderr, "  [glfb] ===== shader %u (type 0x%x) contains \"%s\", %zu bytes =====\n",
+                            shader, klfb_shader_type(shader), match, off);
+                    const char *ln = buf;
+                    while (ln && *ln) {
+                        const char *nl = strchr(ln, '\n');
+                        int len = nl ? (int)(nl - ln) : (int)strlen(ln);
+                        fprintf(stderr, "  [glsl %u] %.*s\n", shader, len, ln);
+                        ln = nl ? nl + 1 : NULL;
+                    }
+                    fprintf(stderr, "  [glfb] ===== end of shader %u =====\n", shader);
+                }
+            }
             // `#version` must be the FIRST thing in the source: ANGLE rejects a
             // shader that opens with a blank line ("#version directive must occur
             // on the first line"), where the Android drivers these guests were
@@ -2455,6 +2483,46 @@ static void klfb_ShaderSource(uint32_t shader, int32_t count,
             }
             // Either flag sends `buf` to ANGLE instead of the guest's strings.
             int dbg_modified = trimmed;
+            // KL_GLFB_VS_FINITE: a vertex whose clip position is not finite
+            // (an exponent of all ones: infinity or NaN) is moved outside the
+            // view. Synth Riders shows its pooled rail LineRenderers for two
+            // seconds at song start with every point the same; the line
+            // geometry of a zero-length segment is not finite, and where a
+            // Quest's GPU drops such a triangle Apple's draws it — a straight
+            // green line out to the screen's edge and dark wedges across the
+            // scene (2026-10-15). The rail's fragment shader hides nothing, so
+            // geometry is all there is. The guest's main becomes kvm_ (same
+            // length, an in-place edit) and a new main checks gl_Position by
+            // its bits, which no fast-math compile can fold away.
+            {
+                static int on = -1;
+                if (on < 0) {
+                    extern const char *kl_driver_target_name(void);
+                    const char *t = kl_driver_target_name();
+                    // Default off since the headset run of 2026-10-15: on, the line
+                    // was still there — the rails' geometry is finite after all.
+                    (void)t;
+                    on = kl_env_on("KL_GLFB_VS_FINITE", 0);
+                }
+                char *m;
+                if (on && klfb_shader_type(shader) == 0x8B31 /* VERTEX */ &&
+                    strncmp(buf, "#version 3", 10) == 0 && (m = strstr(buf, "void main()")) &&
+                    !strstr(m + 1, "void main()") && !strstr(buf, "kvm_")) {
+                    static const char tail[] =
+                        "\nvoid main()\n{\n    kvm_();\n"
+                        "    uvec4 kl_e = floatBitsToUint(gl_Position) & uvec4(0x7f800000u);\n"
+                        "    if (any(equal(kl_e, uvec4(0x7f800000u)))) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);\n}\n";
+                    if (off + sizeof tail < cap) {
+                        memcpy(m, "void kvm_()", 11);
+                        memcpy(buf + off, tail, sizeof tail);
+                        off += sizeof tail - 1;
+                        dbg_modified = 1;
+                        static int said;
+                        if (!said++) fprintf(stderr, "  [glfb] vertex shaders: non-finite positions are put "
+                                                     "out of view (KL_GLFB_VS_FINITE)\n");
+                    }
+                }
+            }
             // A compute kernel becomes the vertex shader its object already is
             // (see "compute kernels as transform feedback" above).
             {
@@ -2700,6 +2768,7 @@ static void klfb_CompileShader(uint32_t shader) {
 // KL_GLFB_PROGRAM_BINARY=0 refuses the binary path outright: the program is
 // left unlinked, which is precisely what the spec says a rejected binary looks
 // like, so a guest that checks GL_LINK_STATUS falls back to its shader source.
+static void klfb_vfx_mark_names(uint32_t program);   // KL_GLFB_SKIP_VFX, below
 static void (*g_real_ProgramBinary)(uint32_t, uint32_t, const void *, int32_t);
 static _Atomic unsigned g_pb_loads, g_pb_failed, g_pb_refused;
 static void klfb_ProgramBinary(uint32_t program, uint32_t format,
@@ -2717,6 +2786,7 @@ static void klfb_ProgramBinary(uint32_t program, uint32_t format,
     }
     if (!g_real_ProgramBinary) return;
     g_real_ProgramBinary(program, format, binary, length);
+    klfb_vfx_mark_names(program);          // KL_GLFB_SKIP_VFX: cached programs have no source
 
     static void (*r_GetProgramiv)(uint32_t, uint32_t, int32_t *);
     static void (*r_GetProgramInfoLog)(uint32_t, int32_t, int32_t *, char *);
@@ -2756,6 +2826,92 @@ void kl_glfb_program_binary_census(FILE *f) {
                    "glUseProgram on it is GL_INVALID_OPERATION\n");
 }
 
+// KL_GLFB_SKIP_VFX: Synth Riders' VFX Graph effects. VFX Graph fills its
+// particle buffers with compute kernels, and those fail here ("VFXCopyBuffer.
+// compute: Kernel at index (3) is invalid" — ES 3.0 ANGLE has no compute), so
+// its output shaders draw from buffers nothing initialised: the stray green
+// lines across the play area and the dark green triangle in the menu
+// (headset, 2026-10-15). A program one of whose shaders names a VFX particle
+// buffer is marked at link, and its draws are left out — what a device without
+// compute shaders shows of these effects. Counted in the log.
+#define KLFB_VFX_PROGS 8192
+static uint8_t g_vfx_prog[KLFB_VFX_PROGS];
+static unsigned g_vfx_skipped;
+static int klfb_skip_vfx_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        extern const char *kl_driver_target_name(void);
+        const char *t = kl_driver_target_name();
+        on = kl_env_on("KL_GLFB_SKIP_VFX", t && strcmp(t, "x2436558143118760") == 0);
+    }
+    return on;
+}
+static const char *klfb_shader_src(uint32_t shader);
+static const char *const g_vfx_marks[] = { "attributeBuffer", "deadListIn", "deadListOut",
+                                           "elementToVFXBuffer", "graphValuesBuffer" };
+static void klfb_vfx_say(uint32_t program, const char *mark, const char *how) {
+    static int said;
+    if (said++ < 16)
+        fprintf(stderr, "  [glfb] program %u is a VFX Graph shader (\"%s\", %s) — its draws are "
+                        "left out (KL_GLFB_SKIP_VFX)\n", program, mark, how);
+}
+// The same, from what the linked program reports: its active uniforms and
+// uniform blocks by name. A program loaded from Unity's binary cache has no
+// source here and is never linked, so this is the only way to know it.
+static void klfb_vfx_mark_names(uint32_t program) {
+    if (program >= KLFB_VFX_PROGS || g_vfx_prog[program] || !klfb_skip_vfx_on()) return;
+    static void (*r_piv)(uint32_t, uint32_t, int32_t *);
+    static void (*r_au)(uint32_t, uint32_t, int32_t, int32_t *, int32_t *, uint32_t *, char *);
+    static void (*r_ubn)(uint32_t, uint32_t, int32_t, int32_t *, char *);
+    if (!r_piv) r_piv = asym("glGetProgramiv");
+    if (!r_au) r_au = asym("glGetActiveUniform");
+    if (!r_ubn) r_ubn = asym("glGetActiveUniformBlockName");
+    if (!r_piv) return;
+    int32_t ok = 0, nu = 0, nb = 0;
+    r_piv(program, 0x8B82 /* LINK_STATUS */, &ok);
+    if (!ok) return;
+    r_piv(program, 0x8B86 /* ACTIVE_UNIFORMS */, &nu);
+    r_piv(program, 0x8A36 /* ACTIVE_UNIFORM_BLOCKS */, &nb);
+    char name[128];
+    for (int32_t i = 0; r_au && i < nu && i < 256; i++) {
+        int32_t len = 0, size = 0; uint32_t type = 0; name[0] = 0;
+        r_au(program, (uint32_t)i, sizeof name, &len, &size, &type, name);
+        for (size_t k = 0; k < sizeof g_vfx_marks / sizeof g_vfx_marks[0]; k++)
+            if (strstr(name, g_vfx_marks[k])) { g_vfx_prog[program] = 1; klfb_vfx_say(program, g_vfx_marks[k], "uniform"); return; }
+    }
+    for (int32_t i = 0; r_ubn && i < nb && i < 64; i++) {
+        int32_t len = 0; name[0] = 0;
+        r_ubn(program, (uint32_t)i, sizeof name, &len, name);
+        for (size_t k = 0; k < sizeof g_vfx_marks / sizeof g_vfx_marks[0]; k++)
+            if (strstr(name, g_vfx_marks[k])) { g_vfx_prog[program] = 1; klfb_vfx_say(program, g_vfx_marks[k], "uniform block"); return; }
+    }
+}
+static void klfb_vfx_mark(uint32_t program) {
+    if (program >= KLFB_VFX_PROGS || !klfb_skip_vfx_on()) return;
+    static void (*r_att)(uint32_t, int32_t, int32_t *, uint32_t *);
+    if (!r_att) r_att = asym("glGetAttachedShaders");
+    if (!r_att) return;
+    uint32_t sh[8]; int32_t n = 0;
+    r_att(program, 8, &n, sh);
+    for (int i = 0; i < n; i++) {
+        const char *src = klfb_shader_src(sh[i]);
+        if (!src) continue;
+        for (size_t k = 0; k < sizeof g_vfx_marks / sizeof g_vfx_marks[0]; k++)
+            if (strstr(src, g_vfx_marks[k])) {
+                g_vfx_prog[program] = 1;
+                klfb_vfx_say(program, g_vfx_marks[k], "source");
+                return;
+            }
+    }
+    klfb_vfx_mark_names(program);
+}
+// In each draw thunk: a marked program's draw does not happen.
+#define KLFB_VFX_SKIP() do { \
+        if (g_cur_prog < KLFB_VFX_PROGS && g_vfx_prog[g_cur_prog]) { \
+            if ((g_vfx_skipped++ & 0x3fff) == 0) \
+                fprintf(stderr, "  [glfb] VFX draws left out so far: %u\n", g_vfx_skipped); \
+            return; } } while (0)
+
 static void klfb_LinkProgram(uint32_t program) {
     if (!g_real_LinkProgram) return;
     pthread_mutex_lock(&g_compile_lock);
@@ -2763,6 +2919,7 @@ static void klfb_LinkProgram(uint32_t program) {
     klfb_pins_bind(program);
     g_real_LinkProgram(program);
     klfb_cs_linked(program);
+    klfb_vfx_mark(program);
     if (slow_t0) {
         // The link may be finished behind this call; asking for its status is
         // what waits for it, and what the guest does next anyway.
@@ -4613,6 +4770,53 @@ static void klfb_TexStorage3D(uint32_t target, int32_t levels, uint32_t fmt,
         }
     }
     if (g_real_TexStorage3D) g_real_TexStorage3D(target, levels, fmt, w, h, d);
+}
+
+// glTexStorage2DMultisample is ES 3.1, and the ANGLE context behind this
+// renderer is ES 3.0: the core entry point refuses on the version, so the
+// texture is left without storage. ANGLE serves the same allocation for an
+// ES 3.0 context as GL_ANGLE_texture_multisample (the TEXTURE_2D_MULTISAMPLE
+// bind and the attachment are already accepted through it), under the name
+// glTexStorage2DMultisampleANGLE with identical arguments.
+//
+// Synth Riders (Unity 6000.3.13f1) allocates its camera colour target this way
+// and draws the whole scene into it, with a multisampled depth renderbuffer:
+// the framebuffer was GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT, every draw was
+// GL_INVALID_FRAMEBUFFER_OPERATION, and the resolve copied an empty target
+// into the eyes — black, with the music playing. KL_GLFB_TEX_MS_ANGLE=0|1,
+// default 1 for x2436558143118760 only.
+static void (*g_real_TexStorage2DMultisample)(uint32_t, int32_t, uint32_t, int32_t,
+                                              int32_t, uint8_t);
+static int klfb_tex_ms_angle(void) {
+    static int v = -1;
+    if (v < 0) {
+        extern const char *kl_driver_target_name(void);
+        const char *t = kl_driver_target_name();
+        v = kl_env_on("KL_GLFB_TEX_MS_ANGLE", t && strcmp(t, "x2436558143118760") == 0);
+    }
+    return v;
+}
+static void klfb_TexStorage2DMultisample(uint32_t target, int32_t samples, uint32_t fmt,
+                                         int32_t w, int32_t h, uint8_t fixed) {
+    static void (*ext)(uint32_t, int32_t, uint32_t, int32_t, int32_t, uint8_t);
+    static int looked, said;
+    if (klfb_tex_ms_angle()) {
+        if (!looked) {
+            looked = 1;
+            ext = asym("glTexStorage2DMultisampleANGLE");
+            if (!ext && a_eglGetProcAddress)
+                ext = a_eglGetProcAddress("glTexStorage2DMultisampleANGLE");
+        }
+        if (said < 4) {
+            said++;
+            fprintf(stderr, "  [glfb] glTexStorage2DMultisample fmt=0x%04x %dx%d samples=%d "
+                            "-> %s (KL_GLFB_TEX_MS_ANGLE)\n", fmt, w, h, samples,
+                    ext ? "glTexStorage2DMultisampleANGLE" : "no ANGLE entry point, as before");
+        }
+        if (ext) { ext(target, samples, fmt, w, h, fixed); return; }
+    }
+    if (g_real_TexStorage2DMultisample)
+        g_real_TexStorage2DMultisample(target, samples, fmt, w, h, fixed);
 }
 
 void kl_glfb_report_formats(void) {
@@ -9318,6 +9522,7 @@ static void klfb_apply_vertex_bindings(void) {
 
 static void klfb_DrawElements(uint32_t mode, int32_t count, uint32_t type,
                               const void *indices) {
+    KLFB_VFX_SKIP();
     // A pending capture first: it runs on THIS thread, which is the one that
     // draws, so it reads the pbuffer the frame actually landed in — not the
     // swap thread's, which is empty by construction.
@@ -9332,6 +9537,7 @@ static void klfb_DrawElements(uint32_t mode, int32_t count, uint32_t type,
     klfb_errprobe("glDrawElements(after)", d);
 }
 static void klfb_DrawArrays(uint32_t mode, int32_t first, int32_t count) {
+    KLFB_VFX_SKIP();
     klfb_apply_vertex_bindings();
     klfb_service_capture();
     klfb_note_draw();
@@ -9348,6 +9554,7 @@ static void (*g_real_DrawRangeElements)(uint32_t, uint32_t, uint32_t, int32_t,
                                         uint32_t, const void *);
 static void klfb_DrawRangeElements(uint32_t mode, uint32_t start, uint32_t end,
                                    int32_t count, uint32_t type, const void *indices) {
+    KLFB_VFX_SKIP();
     klfb_apply_vertex_bindings();
     klfb_service_capture();
     klfb_note_draw();
@@ -9364,6 +9571,7 @@ static void klfb_DrawRangeElements(uint32_t mode, uint32_t start, uint32_t end,
 // was blind to the scene entirely.
 static void klfb_DrawElementsInstanced(uint32_t mode, int32_t count, uint32_t type,
                                        const void *indices, int32_t instances) {
+    KLFB_VFX_SKIP();
     klfb_apply_vertex_bindings();
     klfb_note_draw();
     klfb_errprobe0("glDrawElementsInstanced(before)");
@@ -9391,6 +9599,7 @@ static void (*g_real_DrawElementsBaseVertexEXT)(uint32_t, int32_t, uint32_t,
                                                 const void *, int32_t);
 static void klfb_DrawElementsBaseVertex(uint32_t mode, int32_t count, uint32_t type,
                                         const void *indices, int32_t basevertex) {
+    KLFB_VFX_SKIP();
     klfb_apply_vertex_bindings();
     klfb_note_draw();
     static int resolved;
@@ -9479,6 +9688,7 @@ static void klfb_DrawRangeElementsBaseVertex(uint32_t mode, uint32_t start, uint
 }
 static void klfb_DrawArraysInstanced(uint32_t mode, int32_t first, int32_t count,
                                      int32_t instances) {
+    KLFB_VFX_SKIP();
     klfb_apply_vertex_bindings();
     klfb_note_draw();
     klfb_errprobe0("glDrawArraysInstanced(before)");
@@ -10784,6 +10994,7 @@ static const struct { const char *name; void *thunk; void **real; } g_thunks[] =
     {"glClear",                   (void *)klfb_Clear,                   (void **)&g_real_Clear},
     {"glClearColor",              (void *)klfb_ClearColor,              (void **)&g_real_ClearColor},
     {"glRenderbufferStorageMultisample", (void *)klfb_RenderbufferStorageMultisample, (void **)&g_real_RenderbufferStorageMultisample},
+    {"glTexStorage2DMultisample", (void *)klfb_TexStorage2DMultisample, (void **)&g_real_TexStorage2DMultisample},
     {"glRenderbufferStorage",     (void *)klfb_RenderbufferStorage,     (void **)&g_real_RenderbufferStorage},
     // GL_EXT_multisampled_render_to_texture — implicit resolve, downgraded to
     // single-sample (see the block near klfb_force_ss). ANGLE-Metal never

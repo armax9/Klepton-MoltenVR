@@ -1124,6 +1124,14 @@ STORE_DEFAULTS = {
     # everywhere but the middle (on device, 2026-10-12; with it off the author
     # found the picture "deutlich besser").
     "x2773034772778845": {"foveation": False},
+    # Synth Riders 3.6.6 (Unity 6000.3.13f1). Foveation off: it draws the scene
+    # into a 4x MULTISAMPLED texture of the eye size and resolves that into the
+    # eye texture with glBlitFramebuffer. The size rule foveates the scene
+    # target, the blit does not rasterize through the map, so the eye received
+    # the warped picture as it lay in the physical corner: shifted to the lower
+    # left, distorted, and pink where nothing had been written (on device,
+    # 2026-10-15). "foveation_reset" calls back a stored "on" once. (Fix 42.)
+    "x2436558143118760": {"foveation": False, "foveation_reset": 1},
 }
 
 

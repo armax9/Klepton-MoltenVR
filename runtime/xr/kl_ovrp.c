@@ -80,7 +80,8 @@ static uint64_t klovrp_called(const char *name) {
     // old value-returning entry points (ovrp_GetNodePose and the like) are not
     // reached at such a version — the guest's C# prefers their successors — and
     // if one is, the line below names it.
-    //   default "unsupported" for x3634830803298285, x1642239225880682 and
+    //   default "unsupported" for x3634830803298285, x1642239225880682,
+    //   x2436558143118760 (Synth Riders, told its own 1.115.0) and
     //   x4015163475201433 (LES MILLS BODYCOMBAT, told its own 1.98.0), else "abort"
     static int soft = -1;
     if (soft < 0) {
@@ -90,6 +91,7 @@ static uint64_t klovrp_called(const char *name) {
         // and LES MILLS BODYCOMBAT, told its own 1.98.0.
         soft = e && *e ? !strcmp(e, "unsupported") : (t && (!strcmp(t, "x3634830803298285") ||
                                                              !strcmp(t, "x1642239225880682") ||
+                                                             !strcmp(t, "x2436558143118760") ||
                                                              !strcmp(t, "x4015163475201433")));
     }
     if (soft) {
@@ -653,6 +655,9 @@ static const char *klovrp_version_str(void) {
         // number it says True; on a Mac host run exactly one entry point came up
         // that had no answer (ovrp_IsControllerDrivenHandPosesEnabled, below).
         else if (t && strcmp(t, "x1642239225880682") == 0)  v = "1.101.1";
+        // Synth Riders ships 1.115.0 (Oculus Utilities 1.115) and has a
+        // mixed-reality mode that did nothing told 1.60.0 (2026-10-15).
+        else if (t && strcmp(t, "x2436558143118760") == 0)  v = "1.115.0";
         // LES MILLS BODYCOMBAT ships 1.98.0 and has a mixed-reality switch in its
         // menu. Told 1.60.0, OVRPlugin's C# answers its passthrough request
         // itself — "Failed to initialize Insight Passthrough ... Failure_Unsupported"
@@ -1488,6 +1493,12 @@ static int klovrp_title_cap(const char *t) {
         // multisampling it is held at (KL_VK_MAX_SAMPLES): at 3072 and 2x the app
         // stood at 4.4 to 4.7 of its 8.2 GB.
         if (t && strcmp(t, "x3634830803298285") == 0) cap_dflt = 4000;
+        // Synth Riders (Unity 6000, fix 39): its owner on the first build with a
+        // picture, 2026-10-15: "Auflösung könnte höher sein". At 3072 its eye was
+        // 3072x2465, and its anti-aliasing is gone (KL_GLFB_MS_TEX_AS_2D serves
+        // the 4x scene target single-sampled), so the larger target is what
+        // smooths its edges; 4000 as for the two games above.
+        if (t && strcmp(t, "x2436558143118760") == 0) cap_dflt = 4000;
         // LES MILLS BODYCOMBAT: a light scene on GL with no multisampling of its
         // own. At 3072 (the display asked for 4633) its owner called the picture
         // "viel zu niedrig" on device, 2026-10-15.
@@ -2246,17 +2257,77 @@ static uint64_t klovrp_SetTrackingOriginType2(int origin) {
 // and hand it an uninitialised type and pointer to parse.
 //
 // Deliberately NOT a shared-handler entry: the out-params are the whole call.
+//
+// One event is generated: PassthroughLayerResumed (ovrpEventType 500, data
+// { int LayerId }), once a passthrough layer is first filed after the guest
+// initialised passthrough — what a Quest's compositor says when the room is
+// actually showing under that layer. OVRPassthroughLayer raises its
+// passthroughLayerResumed from it, and a game that waits for the room before
+// it takes its own world away (Synth Riders' MixedRealityManager, "the MR
+// button does nothing", 2026-10-15) waits on that. Only where passthrough is
+// offered (klovrp_pt_on) and KL_OVRP_PT_RESUMED is on — Synth Riders only by
+// default; everyone else still never sees an event.
+//
+// The emulated room (KL_OVRP_SCENE_ROOM, further down) adds the scene ones:
+// SpaceSetComponentStatusComplete (50), SpaceDiscoveryResultsAvailable (300)
+// and SpaceDiscoveryComplete (301). Numbers and data layouts as Synth Riders'
+// own OVRPlugin.cs / OVRDeserialize.cs carry them (Cpp2IL dump, 2026-10-15).
+// A small FIFO, filled from whichever thread files the request and drained by
+// the guest's OVRManager every frame.
+#define KLOVRP_EVENT_PASSTHROUGH_LAYER_RESUMED 500u
+#define KLOVRP_EV_MAX 32
+#define KLOVRP_EV_DATA 4000                    // EventDataBuffer.EventData
+static struct { uint32_t type; unsigned char data[KLOVRP_EV_DATA]; } g_ev_q[KLOVRP_EV_MAX];
+static unsigned g_ev_head, g_ev_tail;
+static pthread_mutex_t g_ev_mu = PTHREAD_MUTEX_INITIALIZER;
+static unsigned char g_ev_data[4096];          // what PollEvent2 hands out, valid until the next poll
+static void klovrp_event_push(uint32_t type, const void *data, size_t len) {
+    pthread_mutex_lock(&g_ev_mu);
+    if (g_ev_tail - g_ev_head < KLOVRP_EV_MAX) {
+        unsigned i = g_ev_tail++ % KLOVRP_EV_MAX;
+        g_ev_q[i].type = type;
+        memset(g_ev_q[i].data, 0, KLOVRP_EV_DATA);
+        if (data && len) memcpy(g_ev_q[i].data, data, len < KLOVRP_EV_DATA ? len : KLOVRP_EV_DATA);
+    }
+    pthread_mutex_unlock(&g_ev_mu);
+}
+static int klovrp_event_take(uint32_t *type) {
+    int got = 0;
+    pthread_mutex_lock(&g_ev_mu);
+    if (g_ev_head != g_ev_tail) {
+        unsigned i = g_ev_head++ % KLOVRP_EV_MAX;
+        *type = g_ev_q[i].type;
+        memset(g_ev_data, 0, sizeof g_ev_data);
+        memcpy(g_ev_data, g_ev_q[i].data, KLOVRP_EV_DATA);
+        got = 1;
+    }
+    pthread_mutex_unlock(&g_ev_mu);
+    if (got) {
+        static int said;
+        if (said++ < 40) fprintf(stderr, "  [ovrp] event %u handed to the guest\n", *type);
+    }
+    return got;
+}
+
 static uint64_t klovrp_PollEvent2(uint32_t *type, void **data) {
     ovrp_hit("ovrp_PollEvent2");
     if (!type || !data) return OVRP_FAIL_INVALID_PARAM;
+    if (klovrp_event_take(type)) { *data = g_ev_data; return OVRP_SUCCESS; }
     return OVRP_FAIL_OPERATION;                    // the queue is empty
 }
 
 // The v1 spelling takes the buffer by reference and fills a type field inside
-// it; same empty answer, and the same refusal for a NULL.
+// it; same empty answer, and the same refusal for a NULL. The buffer is
+// { ovrpEventType EventType; uint8_t EventData[4000]; }.
 static uint64_t klovrp_PollEvent(void *buf) {
     ovrp_hit("ovrp_PollEvent");
     if (!buf) return OVRP_FAIL_INVALID_PARAM;
+    uint32_t type;
+    if (klovrp_event_take(&type)) {
+        memcpy(buf, &type, sizeof type);
+        memcpy((unsigned char *)buf + 4, g_ev_data, 4000);
+        return OVRP_SUCCESS;
+    }
     return OVRP_FAIL_OPERATION;
 }
 
@@ -2620,6 +2691,7 @@ float kl_ovrp_eye_height(void) { return klovrp_eye_height(); }
 // KL_OVRP_LATCH=0 restores the live read, which is every measurement taken
 // before this and the A/B if the pinning is ever suspected of costing latency.
 static klovrp_pose g_frame_head, g_frame_hand[2];
+
 static uint32_t    g_frame_pose_seq;
 static int         g_frame_latched;
 
@@ -7592,8 +7664,9 @@ int  kl_ovrp_eyeless_black(void) { return g_eyeless_black && !g_eye_layer_live; 
 //   KL_OVRP_PASSTHROUGH=0|1 — default 1 for TRIANGLE STRATEGY
 //       (x5340130476095884), whose mixed-reality mode this was written for
 //       (2026-10-12), for Demeo (x3634830803298285), for Richie's Plank
-//       Experience (x1642239225880682) and for LES MILLS BODYCOMBAT
-//       (x4015163475201433), else 0: no other
+//       Experience (x1642239225880682), for Synth Riders
+//       (x2436558143118760: its MR mode "macht nichts", 2026-10-15) and for
+//       LES MILLS BODYCOMBAT (x4015163475201433), else 0: no other
 //       game has been seen with a "yes".
 //
 // A Unity guest (OVROverlay / OVRPassthroughLayer) does not put the layer in
@@ -7611,6 +7684,7 @@ static int klovrp_pt_on(void) {
         on = kl_env_on("KL_OVRP_PASSTHROUGH", t && (!strcmp(t, "x5340130476095884") ||
                                                     !strcmp(t, "x3634830803298285") ||
                                                     !strcmp(t, "x1642239225880682") ||
+                                                    !strcmp(t, "x2436558143118760") ||
                                                     !strcmp(t, "x4015163475201433")));
         if (on)
             fprintf(stderr, "  [ovrp] passthrough: offered to the guest — the room shows "
@@ -7636,6 +7710,28 @@ int kl_ovrp_passthrough_live(void) { return g_pt_frames_since < KLOVRP_PT_GRACE_
 static volatile unsigned g_pt_enq_since = 1000000u;
 static volatile int g_pt_enq_shape;
 static void klovrp_pt_enqueued(int shape) { g_pt_enq_shape = shape; g_pt_enq_since = 0; }
+// The layer PassthroughLayerResumed was last told for (see klovrp_PollEvent2);
+// forgotten when the guest shuts passthrough down, so turning it on again is
+// told again.
+static int g_pt_resumed_layer = -1;
+//   KL_OVRP_PT_RESUMED=0|1 — default 1 for Synth Riders (x2436558143118760)
+//       only: the games passthrough already worked for were seen without it.
+static int klovrp_pt_resumed_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *t = kl_driver_target_name();
+        on = kl_env_on("KL_OVRP_PT_RESUMED", t && !strcmp(t, "x2436558143118760"));
+    }
+    return on;
+}
+static void klovrp_pt_resumed(int layer_id) {
+    if (!klovrp_pt_resumed_on()) return;
+    if (!g_pt_init || layer_id == g_pt_resumed_layer) return;
+    g_pt_resumed_layer = layer_id;
+    int32_t data = layer_id;                   // PassthroughLayerResumedData { int LayerId }
+    klovrp_event_push(KLOVRP_EVENT_PASSTHROUGH_LAYER_RESUMED, &data, sizeof data);
+    fprintf(stderr, "  [ovrp] passthrough: PassthroughLayerResumed (layer %d) queued\n", layer_id);
+}
 
 static void klovrp_pt_submits(const void *layer_submits, int count) {
     extern void kl_reproject_set_eye_alpha(int mode);
@@ -7651,6 +7747,7 @@ static void klovrp_pt_submits(const void *layer_submits, int count) {
             if (eye < 0) { eye = i; eye_flags = s->submit_flags; eye_fmt = l->desc.format; }
         } else if (pt < 0 && klovrp_shape_is_passthrough(l->desc.shape)) {
             pt = i; shape = l->desc.shape;
+            klovrp_pt_resumed(s->layer_id);
         }
     }
     // ...or filed by itself, the way Unity does it. Not in the list, so it has
@@ -7720,7 +7817,471 @@ static uint64_t klovrp_ShutdownInsightPassthrough(void) {
     ovrp_hit("ovrp_ShutdownInsightPassthrough");
     if (g_pt_init) fprintf(stderr, "  [ovrp] passthrough: shut down by the guest\n");
     g_pt_init = 0;
+    g_pt_resumed_layer = -1;
     return OVRP_SUCCESS;
+}
+
+// ---- An emulated room: the scene a Quest's Space Setup would have recorded ----
+//
+// Synth Riders' MR button (com.Kluge.XR.MixedReality.MixedRealityManager, read
+// off its Cpp2IL dump on 2026-10-15) turns passthrough on and then calls
+// OVRSceneManager.LoadSceneModel; only OnSceneModelLoadedSuccessfully shows the
+// room — it takes the floor's outline (GetSpaceBoundary2D) for its play area and
+// sorts the walls by direction — and with no room OnNoSceneModelToLoad asks for
+// Space Setup and turns MR off again. This plugin had no rooms at all
+// (ovrp_DiscoverSpaces: UNSUPPORTED), so the button "did nothing".
+//
+// What is answered here is a room as the scene API describes one: a room anchor
+// (RoomLayout, SpaceContainer, Locatable) holding a floor, a ceiling and four
+// walls (Locatable, Bounded2D, SemanticLabels). By default a box around the
+// head (see KL_OVRP_SCENE_PLANES, kl_ovrp_scene_wanted). With the switch on,
+// the room is the real one where visionOS has seen it: the frontend's plane detection (KleptonCompositor, a
+// session of its own) hands floor, ceiling and wall planes over through
+// kl_ovrp_scene_planes, in ARKit's world space — the space the head pose comes
+// in — and they are shifted here exactly as the head is (EyeLevel height, stick
+// movement). What it has not seen is filled in: no floor, one at y=0 under the
+// walls or the head; no ceiling, one 2.6 m above the floor; no walls at all, the
+// four of a box around the floor. Taken when the guest asks for rooms
+// (DiscoverSpaces with a RoomLayout filter) and kept until it asks again.
+//
+// Plane frames follow the scene convention: the plane in local XY, +Z its
+// normal — up for the floor, down for the ceiling, into the room for a wall.
+//   KL_OVRP_SCENE_ROOM=0|1 — default 1 for Synth Riders (x2436558143118760),
+//       else 0, where every one of these says UNSUPPORTED as before.
+//   KL_OVRP_ROOM=<w>x<d>x<h> — the box in metres, default 4x4x2.6, where no
+//       plane has been seen.
+static int klovrp_scene_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *t = kl_driver_target_name();
+        on = kl_env_on("KL_OVRP_SCENE_ROOM", t && !strcmp(t, "x2436558143118760"));
+        if (on) fprintf(stderr, "  [ovrp] scene: an emulated room is offered (KL_OVRP_SCENE_ROOM)\n");
+    }
+    return on;
+}
+
+// KL_OVRP_SCENE_PLANES=0|1 — build the room from visionOS's plane detection
+// (default 0). Marcel on the measured room, 2026-10-15: "Der Raum ist
+// verschoben, dann lieber mit dem fake Raum ... das ist stabiler" — it came
+// out shifted, and the first press found nothing until he had looked around.
+// Off, the box around the head is the room, at once and always the same.
+int kl_ovrp_scene_wanted(void) {
+    static int on = -1;
+    if (on < 0) on = klovrp_scene_on() && kl_env_on("KL_OVRP_SCENE_PLANES", 0);
+    return on;
+}
+
+enum { KLR_ROOM, KLR_FLOOR, KLR_CEILING, KLR_WALL0, KLR_N = KLR_WALL0 + 12 };   // KLR_N: the most
+#define KLR_HANDLE0 0x6b6c00000000a000ull      // handles: KLR_HANDLE0 + index
+typedef struct { float qx, qy, qz, qw, px, py, pz; } klr_posef;   // ovrpPosef: orientation, then position
+static struct {
+    int built, n;               // n anchors: room, floor, ceiling, then walls
+    float w, d, h;              // extents
+    klr_posef pose[KLR_N];
+    float ext_x[KLR_N], ext_y[KLR_N];   // plane size in its local X and Y
+    int locatable_on[KLR_N];
+} g_room;
+
+static void klr_uuid(int i, unsigned char out[16]) {
+    // Fixed, recognisable and distinct: "klepton-room" + index.
+    static const unsigned char base[16] = { 'k','l','e','p','t','o','n','-','r','o','o','m',0,0,0,0 };
+    memcpy(out, base, 16);
+    out[15] = (unsigned char)(i + 1);
+    out[6] = (unsigned char)((out[6] & 0x0f) | 0x40);   // version 4, variant 1: a well-formed GUID
+    out[8] = (unsigned char)((out[8] & 0x3f) | 0x80);
+}
+static int klr_index(uint64_t handle) {
+    if (handle < KLR_HANDLE0 || handle >= KLR_HANDLE0 + (uint64_t)g_room.n) return -1;
+    return (int)(handle - KLR_HANDLE0);
+}
+static int klr_index_of_uuid(const unsigned char u[16]) {
+    unsigned char t[16];
+    for (int i = 0; i < g_room.n; i++) { klr_uuid(i, t); if (!memcmp(t, u, 16)) return i; }
+    return -1;
+}
+// The planes the frontend has seen, ARKit world space: kind 0 floor, 1 ceiling,
+// 2 wall; m the scene-convention pose (column-major 4x4: plane in local XY,
+// +Z its normal), ext its width and height.
+#define KLR_SEEN_MAX 24
+static struct { int kind; float m[16]; float w, h; } g_klr_seen[KLR_SEEN_MAX];
+static int g_klr_seen_n;
+static pthread_mutex_t g_klr_seen_mu = PTHREAD_MUTEX_INITIALIZER;
+
+void kl_ovrp_scene_planes(int count, const int *kinds, const float *m16, const float *ext2) {
+    if (count < 0) count = 0;
+    if (count > KLR_SEEN_MAX) count = KLR_SEEN_MAX;
+    pthread_mutex_lock(&g_klr_seen_mu);
+    for (int i = 0; i < count; i++) {
+        g_klr_seen[i].kind = kinds[i];
+        memcpy(g_klr_seen[i].m, m16 + 16 * i, sizeof g_klr_seen[i].m);
+        g_klr_seen[i].w = ext2[2 * i]; g_klr_seen[i].h = ext2[2 * i + 1];
+    }
+    int was = g_klr_seen_n;
+    g_klr_seen_n = count;
+    pthread_mutex_unlock(&g_klr_seen_mu);
+    static int said;
+    if (count != was && said++ < 12) {
+        int f = 0, c = 0, w = 0;
+        for (int i = 0; i < count; i++) { if (kinds[i] == 0) f++; else if (kinds[i] == 1) c++; else w++; }
+        fprintf(stderr, "  [ovrp] scene: visionOS sees %d floor, %d ceiling, %d wall plane(s)\n", f, c, w);
+    }
+}
+
+// A 3x3 rotation (column-major, from a 4x4) to a quaternion.
+static void klr_quat_from_m(const float *m, float *qx, float *qy, float *qz, float *qw) {
+    float r00 = m[0], r10 = m[1], r20 = m[2], r01 = m[4], r11 = m[5], r21 = m[6], r02 = m[8], r12 = m[9], r22 = m[10];
+    float t = r00 + r11 + r22, x, y, z, w;
+    if (t > 0) { float S = sqrtf(t + 1.0f) * 2; w = 0.25f * S; x = (r21 - r12) / S; y = (r02 - r20) / S; z = (r10 - r01) / S; }
+    else if (r00 > r11 && r00 > r22) { float S = sqrtf(1.0f + r00 - r11 - r22) * 2; w = (r21 - r12) / S; x = 0.25f * S; y = (r01 + r10) / S; z = (r02 + r20) / S; }
+    else if (r11 > r22) { float S = sqrtf(1.0f + r11 - r00 - r22) * 2; w = (r02 - r20) / S; x = (r01 + r10) / S; y = 0.25f * S; z = (r12 + r21) / S; }
+    else { float S = sqrtf(1.0f + r22 - r00 - r11) * 2; w = (r10 - r01) / S; x = (r02 + r20) / S; y = (r12 + r21) / S; z = 0.25f * S; }
+    float n = sqrtf(x * x + y * y + z * z + w * w);
+    if (n > 0) { x /= n; y /= n; z /= n; w /= n; }
+    *qx = x; *qy = y; *qz = z; *qw = w;
+}
+
+static void klr_build(void) {
+    float bw = 4.0f, bd = 4.0f, bh = 2.6f;
+    const char *e = kl_env_str("KL_OVRP_ROOM", NULL);
+    if (e && *e) {
+        float a, b, c;
+        if (sscanf(e, "%fx%fx%f", &a, &b, &c) == 3 && a > 0.5f && b > 0.5f && c > 1.0f) { bw = a; bd = b; bh = c; }
+    }
+    const float s = 0.70710678f;
+    pthread_mutex_lock(&g_klr_seen_mu);
+    int floor_i = -1, ceil_i = -1;
+    float floor_a = 0, ceil_a = 0;
+    for (int i = 0; i < g_klr_seen_n; i++) {
+        float a = g_klr_seen[i].w * g_klr_seen[i].h;
+        if (g_klr_seen[i].kind == 0 && a > floor_a) { floor_a = a; floor_i = i; }
+        if (g_klr_seen[i].kind == 1 && a > ceil_a)  { ceil_a = a;  ceil_i = i; }
+    }
+    int n = KLR_WALL0;
+    float minx = 1e9f, maxx = -1e9f, minz = 1e9f, maxz = -1e9f;
+    for (int i = 0; i < g_klr_seen_n && n < KLR_N; i++) {
+        if (g_klr_seen[i].kind != 2 || g_klr_seen[i].w * g_klr_seen[i].h < 0.3f) continue;
+        const float *m = g_klr_seen[i].m;
+        klr_quat_from_m(m, &g_room.pose[n].qx, &g_room.pose[n].qy, &g_room.pose[n].qz, &g_room.pose[n].qw);
+        g_room.pose[n].px = m[12]; g_room.pose[n].py = m[13]; g_room.pose[n].pz = m[14];
+        g_room.ext_x[n] = g_klr_seen[i].w; g_room.ext_y[n] = g_klr_seen[i].h;
+        if (m[12] < minx) minx = m[12]; if (m[12] > maxx) maxx = m[12];
+        if (m[14] < minz) minz = m[14]; if (m[14] > maxz) maxz = m[14];
+        n++;
+    }
+    int walls_seen = n - KLR_WALL0;
+    // The floor: seen, or at y=0 under the walls' middle (or the head).
+    float cx = g_head_set ? g_head_pose.px : 0.0f, cz = g_head_set ? g_head_pose.pz : 0.0f;
+    if (walls_seen >= 2) { cx = (minx + maxx) / 2; cz = (minz + maxz) / 2; }
+    float fy = 0.0f;
+    if (floor_i >= 0) {
+        const float *m = g_klr_seen[floor_i].m;
+        klr_quat_from_m(m, &g_room.pose[KLR_FLOOR].qx, &g_room.pose[KLR_FLOOR].qy,
+                        &g_room.pose[KLR_FLOOR].qz, &g_room.pose[KLR_FLOOR].qw);
+        g_room.pose[KLR_FLOOR].px = m[12]; g_room.pose[KLR_FLOOR].py = fy = m[13]; g_room.pose[KLR_FLOOR].pz = m[14];
+        g_room.ext_x[KLR_FLOOR] = g_klr_seen[floor_i].w; g_room.ext_y[KLR_FLOOR] = g_klr_seen[floor_i].h;
+    } else {
+        float w = walls_seen >= 2 ? fmaxf(maxx - minx, 1.0f) : bw, d = walls_seen >= 2 ? fmaxf(maxz - minz, 1.0f) : bd;
+        g_room.pose[KLR_FLOOR] = (klr_posef){ -s, 0, 0, s, cx, 0, cz };     // +Z -> +Y
+        g_room.ext_x[KLR_FLOOR] = w; g_room.ext_y[KLR_FLOOR] = d;
+    }
+    if (ceil_i >= 0) {
+        const float *m = g_klr_seen[ceil_i].m;
+        klr_quat_from_m(m, &g_room.pose[KLR_CEILING].qx, &g_room.pose[KLR_CEILING].qy,
+                        &g_room.pose[KLR_CEILING].qz, &g_room.pose[KLR_CEILING].qw);
+        g_room.pose[KLR_CEILING].px = m[12]; g_room.pose[KLR_CEILING].py = m[13]; g_room.pose[KLR_CEILING].pz = m[14];
+        g_room.ext_x[KLR_CEILING] = g_klr_seen[ceil_i].w; g_room.ext_y[KLR_CEILING] = g_klr_seen[ceil_i].h;
+    } else {
+        g_room.pose[KLR_CEILING] = (klr_posef){ s, 0, 0, s, g_room.pose[KLR_FLOOR].px, fy + bh, g_room.pose[KLR_FLOOR].pz };
+        g_room.ext_x[KLR_CEILING] = g_room.ext_x[KLR_FLOOR]; g_room.ext_y[KLR_CEILING] = g_room.ext_y[KLR_FLOOR];
+    }
+    int seen_n = g_klr_seen_n;
+    pthread_mutex_unlock(&g_klr_seen_mu);
+    if (walls_seen == 0) {
+        // The four walls of a box around the floor, normals inward.
+        float px = g_room.pose[KLR_FLOOR].px, pz = g_room.pose[KLR_FLOOR].pz;
+        float w = g_room.ext_x[KLR_FLOOR], d = g_room.ext_y[KLR_FLOOR], h = bh;
+        if (floor_i >= 0) { w = fmaxf(w, 2.0f); d = fmaxf(d, 2.0f); }
+        g_room.pose[KLR_WALL0 + 0] = (klr_posef){ 0, 0, 0, 1,  px, fy + h / 2, pz - d / 2 };
+        g_room.pose[KLR_WALL0 + 1] = (klr_posef){ 0, 1, 0, 0,  px, fy + h / 2, pz + d / 2 };
+        g_room.pose[KLR_WALL0 + 2] = (klr_posef){ 0, s, 0, s,  px - w / 2, fy + h / 2, pz };
+        g_room.pose[KLR_WALL0 + 3] = (klr_posef){ 0, -s, 0, s, px + w / 2, fy + h / 2, pz };
+        g_room.ext_x[KLR_WALL0 + 0] = g_room.ext_x[KLR_WALL0 + 1] = w;
+        g_room.ext_x[KLR_WALL0 + 2] = g_room.ext_x[KLR_WALL0 + 3] = d;
+        for (int i = 0; i < 4; i++) g_room.ext_y[KLR_WALL0 + i] = h;
+        n = KLR_WALL0 + 4;
+    }
+    g_room.pose[KLR_ROOM] = (klr_posef){ 0, 0, 0, 1, g_room.pose[KLR_FLOOR].px, fy, g_room.pose[KLR_FLOOR].pz };
+    g_room.n = n;
+    for (int i = 0; i < KLR_N; i++) g_room.locatable_on[i] = 0;
+    g_room.built = 1;
+    fprintf(stderr, "  [ovrp] scene: room from %d visionOS plane(s) — floor %s %.1f x %.1f m, ceiling %s, "
+                    "%d wall(s)%s\n", seen_n, floor_i >= 0 ? "seen" : "made",
+            (double)g_room.ext_x[KLR_FLOOR], (double)g_room.ext_y[KLR_FLOOR],
+            ceil_i >= 0 ? "seen" : "made", n - KLR_WALL0, walls_seen ? " seen" : " made (a box)");
+}
+// Which components an anchor has (SpaceComponentType numbers).
+#define KLR_C_LOCATABLE 0
+#define KLR_C_BOUNDED2D 3
+#define KLR_C_BOUNDED3D 4
+#define KLR_C_SEMANTIC  5
+#define KLR_C_ROOMLAYOUT 6
+#define KLR_C_CONTAINER 7
+static int klr_has(int i, int comp) {
+    if (comp == KLR_C_LOCATABLE) return 1;
+    if (i == KLR_ROOM) return comp == KLR_C_ROOMLAYOUT || comp == KLR_C_CONTAINER;
+    return comp == KLR_C_BOUNDED2D || comp == KLR_C_SEMANTIC;
+}
+static const char *klr_label(int i) {
+    return i == KLR_FLOOR ? "FLOOR" : i == KLR_CEILING ? "CEILING" : i >= KLR_WALL0 ? "WALL_FACE" : "";
+}
+
+// Discovery requests: which anchors each one found, filed at ovrp_DiscoverSpaces
+// and handed out at ovrp_RetrieveSpaceDiscoveryResults.
+#define KLR_REQS 16
+static struct { uint64_t id; int n; int idx[KLR_N]; } g_klr_req[KLR_REQS];
+static uint64_t g_klr_next_req = 0x6b6c5200;
+static pthread_mutex_t g_klr_mu = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct { int32_t type; } klr_filter_hdr;
+typedef struct { int32_t type; int32_t component; } klr_filter_comp;
+typedef struct { int32_t type; int32_t n; const unsigned char *ids; } klr_filter_ids;
+typedef struct { uint32_t n; const klr_filter_hdr *const *filters; } klr_discovery_info;
+
+static uint64_t klovrp_DiscoverSpaces(const klr_discovery_info *info, uint64_t *request) {
+    ovrp_hit("ovrp_DiscoverSpaces");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    if (!info || !request) return OVRP_FAIL_INVALID_PARAM;
+    // Asking for rooms is where a load starts: the room is taken anew from what
+    // visionOS has seen by now, and held for the anchor queries that follow.
+    int asks_rooms = 0;
+    for (uint32_t f = 0; f < info->n && info->filters; f++) {
+        const klr_filter_hdr *h = info->filters[f];
+        if (h && h->type == 3 && ((const klr_filter_comp *)h)->component == KLR_C_ROOMLAYOUT) asks_rooms = 1;
+    }
+    if (asks_rooms || !g_room.built) klr_build();
+    int pick[KLR_N];
+    for (int i = 0; i < KLR_N; i++) pick[i] = i < g_room.n;
+    // Filters narrow (AND): by component, or by a list of uuids.
+    for (uint32_t f = 0; f < info->n && info->filters; f++) {
+        const klr_filter_hdr *h = info->filters[f];
+        if (!h) continue;
+        if (h->type == 3) {
+            int c = ((const klr_filter_comp *)h)->component;
+            for (int i = 0; i < g_room.n; i++) if (!klr_has(i, c)) pick[i] = 0;
+        } else if (h->type == 2) {
+            const klr_filter_ids *fi = (const klr_filter_ids *)h;
+            int want[KLR_N] = {0};
+            for (int k = 0; k < fi->n && fi->ids; k++) {
+                int i = klr_index_of_uuid(fi->ids + 16 * k);
+                if (i >= 0) want[i] = 1;
+            }
+            for (int i = 0; i < KLR_N; i++) if (!want[i]) pick[i] = 0;
+        }
+    }
+    pthread_mutex_lock(&g_klr_mu);
+    uint64_t id = ++g_klr_next_req;
+    int slot = (int)(id % KLR_REQS);
+    g_klr_req[slot].id = id; g_klr_req[slot].n = 0;
+    for (int i = 0; i < g_room.n; i++) if (pick[i]) g_klr_req[slot].idx[g_klr_req[slot].n++] = i;
+    int n = g_klr_req[slot].n;
+    pthread_mutex_unlock(&g_klr_mu);
+    *request = id;
+    fprintf(stderr, "  [ovrp] scene: DiscoverSpaces (%u filter(s)) -> request %#llx, %d anchor(s)\n",
+            info->n, (unsigned long long)id, n);
+    // SpaceDiscoveryResultsData { ulong RequestId } then
+    // SpaceDiscoveryCompleteData { ulong RequestId; int Result }.
+    unsigned char ev[16] = {0};
+    memcpy(ev, &id, 8);
+    if (n) klovrp_event_push(300u, ev, 8);
+    int32_t ok = 0; memcpy(ev + 8, &ok, 4);
+    klovrp_event_push(301u, ev, 12);
+    return OVRP_SUCCESS;
+}
+
+typedef struct { uint64_t space; unsigned char uuid[16]; } klr_result;
+typedef struct { uint32_t cap, count; klr_result *results; } klr_results;
+static uint64_t klovrp_RetrieveSpaceDiscoveryResults(uint64_t request, klr_results *out) {
+    ovrp_hit("ovrp_RetrieveSpaceDiscoveryResults");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    if (!out) return OVRP_FAIL_INVALID_PARAM;
+    pthread_mutex_lock(&g_klr_mu);
+    int slot = (int)(request % KLR_REQS);
+    if (g_klr_req[slot].id != request) { pthread_mutex_unlock(&g_klr_mu); return OVRP_FAIL_INVALID_PARAM; }
+    int n = g_klr_req[slot].n;
+    out->count = (uint32_t)n;
+    if (out->cap >= (uint32_t)n && out->results)
+        for (int k = 0; k < n; k++) {
+            int i = g_klr_req[slot].idx[k];
+            out->results[k].space = KLR_HANDLE0 + (uint64_t)i;
+            klr_uuid(i, out->results[k].uuid);
+        }
+    pthread_mutex_unlock(&g_klr_mu);
+    if (out->cap && out->cap < (uint32_t)n) return (uint64_t)-1007;   // InsufficientSize
+    return OVRP_SUCCESS;
+}
+
+static uint64_t klovrp_GetSpaceUuid(const uint64_t *space, unsigned char *uuid) {
+    ovrp_hit("ovrp_GetSpaceUuid");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    int i = space ? klr_index(*space) : -1;
+    if (i < 0 || !uuid) return (uint64_t)-1013;                         // HandleInvalid
+    klr_uuid(i, uuid);
+    return OVRP_SUCCESS;
+}
+
+static uint64_t klovrp_EnumerateSpaceSupportedComponents(const uint64_t *space, uint32_t cap,
+                                                         uint32_t *count, int32_t *types) {
+    ovrp_hit("ovrp_EnumerateSpaceSupportedComponents");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    int i = space ? klr_index(*space) : -1;
+    if (i < 0 || !count) return (uint64_t)-1013;
+    static const int32_t all[] = { KLR_C_LOCATABLE, KLR_C_BOUNDED2D, KLR_C_SEMANTIC, KLR_C_ROOMLAYOUT, KLR_C_CONTAINER };
+    uint32_t n = 0;
+    for (size_t k = 0; k < sizeof all / sizeof all[0]; k++)
+        if (klr_has(i, all[k])) { if (types && n < cap) types[n] = all[k]; n++; }
+    *count = n;
+    return (cap && cap < n) ? (uint64_t)-1007 : OVRP_SUCCESS;
+}
+
+static uint64_t klovrp_GetSpaceComponentStatus(const uint64_t *space, int32_t comp,
+                                               int32_t *enabled, int32_t *pending) {
+    ovrp_hit("ovrp_GetSpaceComponentStatus");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    int i = space ? klr_index(*space) : -1;
+    if (i < 0) return (uint64_t)-1013;
+    if (!klr_has(i, comp)) return (uint64_t)-2005;                     // ComponentNotSupported
+    if (enabled) *enabled = comp == KLR_C_LOCATABLE ? g_room.locatable_on[i] : 1;
+    if (pending) *pending = 0;
+    return OVRP_SUCCESS;
+}
+
+static uint64_t klovrp_SetSpaceComponentStatus(const uint64_t *space, int32_t comp, int32_t enable,
+                                               double timeout, uint64_t *request) {
+    ovrp_hit("ovrp_SetSpaceComponentStatus");
+    (void)timeout;
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    int i = space ? klr_index(*space) : -1;
+    if (i < 0) return (uint64_t)-1013;
+    if (!klr_has(i, comp)) return (uint64_t)-2005;
+    if (comp == KLR_C_LOCATABLE) g_room.locatable_on[i] = enable != 0;
+    pthread_mutex_lock(&g_klr_mu);
+    uint64_t id = ++g_klr_next_req;
+    pthread_mutex_unlock(&g_klr_mu);
+    if (request) *request = id;
+    // SpaceSetComponentStatusCompleteData: RequestId 0x0, Result 0x8, Space 0x10,
+    // Uuid 0x18, ComponentType 0x28, Enabled 0x2C.
+    unsigned char ev[0x30] = {0};
+    uint64_t h = *space; int32_t ok = 0, en = enable != 0;
+    memcpy(ev + 0x00, &id, 8);
+    memcpy(ev + 0x08, &ok, 4);
+    memcpy(ev + 0x10, &h, 8);
+    klr_uuid(i, ev + 0x18);
+    memcpy(ev + 0x28, &comp, 4);
+    memcpy(ev + 0x2C, &en, 4);
+    klovrp_event_push(50u, ev, sizeof ev);
+    return OVRP_SUCCESS;
+}
+
+// The pose in the tracking space the guest is given, shifted as the head is
+// (kl_ovrp_set_head_pose): stick movement on x/z, the EyeLevel origin on y.
+static klr_posef klr_tracked(int i) {
+    klr_posef p = g_room.pose[i];
+    klovrp_stick_move_offset(&p.px, &p.pz);
+    p.py -= klovrp_origin_y();
+    return p;
+}
+typedef struct { uint64_t flags; klr_posef pose; } klr_location;     // SpaceLocationf
+static uint64_t klovrp_LocateSpace2(klr_location *out, const uint64_t *space, int32_t origin) {
+    ovrp_hit("ovrp_LocateSpace2");
+    (void)origin;
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    int i = space ? klr_index(*space) : -1;
+    if (i < 0 || !out) return (uint64_t)-1013;
+    out->flags = 0xF;                                                  // valid and tracked
+    out->pose = klr_tracked(i);
+    return OVRP_SUCCESS;
+}
+static uint64_t klovrp_LocateSpace(klr_posef *out, const uint64_t *space, int32_t origin) {
+    ovrp_hit("ovrp_LocateSpace");
+    (void)origin;
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    int i = space ? klr_index(*space) : -1;
+    if (i < 0 || !out) return (uint64_t)-1013;
+    *out = klr_tracked(i);
+    return OVRP_SUCCESS;
+}
+
+typedef struct { int32_t cap, count; void *data; } klr_buf;            // the capacity/count/pointer idiom
+static uint64_t klovrp_GetSpaceRoomLayout(const uint64_t *space, void *layout) {
+    ovrp_hit("ovrp_GetSpaceRoomLayout");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    if (!space || klr_index(*space) != KLR_ROOM || !layout) return (uint64_t)-2005;
+    // RoomLayoutInternal: floorUuid 0x0, ceilingUuid 0x10, wall cap 0x20,
+    // count 0x24, wallUuids 0x28.
+    unsigned char *L = layout;
+    klr_uuid(KLR_FLOOR, L);
+    klr_uuid(KLR_CEILING, L + 0x10);
+    klr_buf *walls = (klr_buf *)(L + 0x20);
+    int nw = g_room.n - KLR_WALL0;
+    walls->count = nw;
+    if (walls->cap >= nw && walls->data)
+        for (int k = 0; k < nw; k++) klr_uuid(KLR_WALL0 + k, (unsigned char *)walls->data + 16 * k);
+    return OVRP_SUCCESS;
+}
+static uint64_t klovrp_GetSpaceContainer(const uint64_t *space, klr_buf *c) {
+    ovrp_hit("ovrp_GetSpaceContainer");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    if (!space || klr_index(*space) != KLR_ROOM || !c) return (uint64_t)-2005;
+    c->count = g_room.n - 1;
+    if (c->cap >= g_room.n - 1 && c->data)
+        for (int k = 1; k < g_room.n; k++) klr_uuid(k, (unsigned char *)c->data + 16 * (k - 1));
+    return OVRP_SUCCESS;
+}
+static uint64_t klovrp_GetSpaceSemanticLabels(const uint64_t *space, klr_buf *b) {
+    ovrp_hit("ovrp_GetSpaceSemanticLabels");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    int i = space ? klr_index(*space) : -1;
+    if (i <= KLR_ROOM || !b) return (uint64_t)-2005;
+    const char *l = klr_label(i);
+    int n = (int)strlen(l);
+    b->count = n;
+    if (b->cap >= n && b->data) {
+        memcpy(b->data, l, (size_t)n);
+        if (b->cap > n) ((char *)b->data)[n] = 0;
+    }
+    return OVRP_SUCCESS;
+}
+static uint64_t klovrp_GetSpaceBoundingBox2D(const uint64_t *space, float *rect) {
+    ovrp_hit("ovrp_GetSpaceBoundingBox2D");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    int i = space ? klr_index(*space) : -1;
+    if (i <= KLR_ROOM || !rect) return (uint64_t)-2005;
+    rect[0] = -g_room.ext_x[i] / 2; rect[1] = -g_room.ext_y[i] / 2;    // Rectf: Pos, Size
+    rect[2] = g_room.ext_x[i];      rect[3] = g_room.ext_y[i];
+    return OVRP_SUCCESS;
+}
+static uint64_t klovrp_GetSpaceBoundary2D(const uint64_t *space, klr_buf *b) {
+    ovrp_hit("ovrp_GetSpaceBoundary2D");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    int i = space ? klr_index(*space) : -1;
+    if (i <= KLR_ROOM || !b) return (uint64_t)-2005;
+    // The rectangle, counter-clockwise seen along the normal.
+    float x = g_room.ext_x[i] / 2, y = g_room.ext_y[i] / 2;
+    const float v[8] = { -x, -y,  x, -y,  x, y,  -x, y };
+    b->count = 4;
+    if (b->cap >= 4 && b->data) memcpy(b->data, v, sizeof v);
+    return OVRP_SUCCESS;
+}
+static uint64_t klovrp_GetSpaceBoundingBox3D(const uint64_t *space, float *bounds) {
+    ovrp_hit("ovrp_GetSpaceBoundingBox3D");
+    (void)space; (void)bounds;
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    return (uint64_t)-2005;                                            // planes only
+}
+static uint64_t klovrp_DestroySpace(const uint64_t *space) {
+    ovrp_hit("ovrp_DestroySpace");
+    if (!klovrp_scene_on()) return OVRP_FAIL_UNSUPPORTED;
+    return (space && klr_index(*space) >= 0) ? OVRP_SUCCESS : (uint64_t)-1013;
 }
 // ovrpBool.
 static uint64_t klovrp_GetInsightPassthroughInitialized(void) {
@@ -8675,6 +9236,7 @@ static uint64_t klovrp_EnqueueSubmitLayer2(uint32_t flags, void *texL, void *tex
     // the whole of it (klovrp_pt_submits).
     if (l && !l->is_eye && klovrp_shape_is_passthrough(l->desc.shape)) {
         klovrp_pt_enqueued(l->desc.shape);
+        if (klovrp_pt_on()) klovrp_pt_resumed(layer_id);
         return OVRP_SUCCESS;
     }
     if (l && !l->is_eye && g_enq_n < KLOVRP_MAX_LAYERS) {
@@ -10604,6 +11166,22 @@ static const struct { const char *name; void *fn; } g_ovrp_impl[] = {
     {"ovrp_GetTrackingTransformRelativePose", (void *)klovrp_GetTrackingTransformRelativePose},
     {"ovrp_PollEvent",  (void *)klovrp_PollEvent},
     {"ovrp_PollEvent2", (void *)klovrp_PollEvent2},
+    // The emulated room (KL_OVRP_SCENE_ROOM); UNSUPPORTED where it is off.
+    {"ovrp_DiscoverSpaces", (void *)klovrp_DiscoverSpaces},
+    {"ovrp_RetrieveSpaceDiscoveryResults", (void *)klovrp_RetrieveSpaceDiscoveryResults},
+    {"ovrp_GetSpaceUuid", (void *)klovrp_GetSpaceUuid},
+    {"ovrp_EnumerateSpaceSupportedComponents", (void *)klovrp_EnumerateSpaceSupportedComponents},
+    {"ovrp_GetSpaceComponentStatus", (void *)klovrp_GetSpaceComponentStatus},
+    {"ovrp_SetSpaceComponentStatus", (void *)klovrp_SetSpaceComponentStatus},
+    {"ovrp_LocateSpace2", (void *)klovrp_LocateSpace2},
+    {"ovrp_LocateSpace", (void *)klovrp_LocateSpace},
+    {"ovrp_GetSpaceRoomLayout", (void *)klovrp_GetSpaceRoomLayout},
+    {"ovrp_GetSpaceContainer", (void *)klovrp_GetSpaceContainer},
+    {"ovrp_GetSpaceSemanticLabels", (void *)klovrp_GetSpaceSemanticLabels},
+    {"ovrp_GetSpaceBoundingBox2D", (void *)klovrp_GetSpaceBoundingBox2D},
+    {"ovrp_GetSpaceBoundary2D", (void *)klovrp_GetSpaceBoundary2D},
+    {"ovrp_GetSpaceBoundingBox3D", (void *)klovrp_GetSpaceBoundingBox3D},
+    {"ovrp_DestroySpace", (void *)klovrp_DestroySpace},
     {"ovrp_GetNodeFrustum2", (void *)klovrp_GetNodeFrustum2},
     // Real implementations only so that the frame boundary can be *observed* —
     // both still answer ovrpSuccess and neither has an out-param. This is the

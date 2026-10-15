@@ -45,6 +45,17 @@ int kl_ovrp_tracking_origin(void);
 void kl_ovrp_set_head_pose(float px, float py, float pz,
                            float qx, float qy, float qz, float qw);
 
+// The room a guest's scene queries are answered with (KL_OVRP_SCENE_ROOM): the
+// planes the frontend has seen, in the same world space as the head pose.
+// kinds: 0 floor, 1 ceiling, 2 wall. m16: one column-major 4x4 per plane in the
+// scene convention (the plane in its local XY, +Z its normal). ext2: width and
+// height per plane, in metres. Each call replaces the whole set; any thread.
+void kl_ovrp_scene_planes(int count, const int *kinds, const float *m16, const float *ext2);
+// Whether the frontend should run plane detection for this guest: it is given a
+// room (KL_OVRP_SCENE_ROOM) AND that room is to be measured (KL_OVRP_SCENE_PLANES,
+// off by default — the box around the head is the default room).
+int kl_ovrp_scene_wanted(void);
+
 // Date the NEXT head pose: the instant that pose IS ABOUT, on any monotonic
 // clock the frontend likes, as long as it is the same clock every time. On
 // visionOS that is the PRESENTATION TIME the device anchor was predicted to,

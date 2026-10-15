@@ -225,6 +225,11 @@ TEST_ON = ",".join(dict.fromkeys(
                         + os.environ.get("KLEPTON_TEST_ON_EXTRA", ""))
     if re.fullmatch(r"KL_[A-Z0-9_]{1,60}", n)))
 
+# Typed wire values only: never interpolate arbitrary installer input into a project.
+CONTROLLER_MODE = os.environ.get("KLEPTON_CONTROLLER_MODE", "standard")
+if CONTROLLER_MODE not in ("standard", "surreal"):
+    raise ValueError("KLEPTON_CONTROLLER_MODE must be standard or surreal")
+
 # The render scale an installer wants the game to START at (KLEPTON_RENDER_SCALE,
 # a fraction such as 0.75; AVP Play sets it with its MetalFX switch). It replaces
 # the target's own default (targets.py "render_scale") as KLRenderScaleDefault, so
@@ -243,11 +248,6 @@ if _rs_env:
     else:
         print(f"gen_xcodeproj: KLEPTON_RENDER_SCALE={_rs_env!r} is not a fraction in 0.5..1.0 "
               f"- the target's {RENDER_SCALE:.2f} stays", file=sys.stderr)
-
-# Typed wire values only: never interpolate arbitrary installer input into a project.
-CONTROLLER_MODE = os.environ.get("KLEPTON_CONTROLLER_MODE", "standard")
-if CONTROLLER_MODE not in ("standard", "surreal"):
-    raise ValueError("KLEPTON_CONTROLLER_MODE must be standard or surreal")
 
 # Compile-time launcher opt-in (also drives LAUNCHER_COND + the display name below).
 _launcher_on = _os.environ.get("KL_CUSTOM_LAUNCHER", "").strip().lower() in ("1", "true", "yes", "on")
@@ -352,7 +352,7 @@ ASSETCATALOG_SETTING = ((f"\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = \"{_icon
 # wherever else they do or do not survive. visionos/run.sh checks the product.
 USAGE_DESCRIPTIONS = {
     "NSMicrophoneUsageDescription": "Klepton uses the microphone only when you turn on the Microphone toggle, so a running app (such as Steam Link voice chat) can hear you.",
-    "NSWorldSensingUsageDescription": "Klepton reads the headset's own pose, which is the head pose the guest renders from.",
+    "NSWorldSensingUsageDescription": "Klepton reads the headset's own pose, which is the head pose the guest renders from, and for a mixed-reality game the floor and walls of your room.",
     "NSHandsTrackingUsageDescription": "Klepton maps your hands onto the guest's two Touch controllers.",
     "NSAccessoryTrackingUsageDescription": "Klepton maps PSVR2 Sense controllers onto the guest's two Touch controllers.",
     "NSBluetoothAlwaysUsageDescription": "Klepton connects to spatial controllers that are not visible to the system as standard game controllers.",

@@ -30,6 +30,7 @@ static struct {
     const char       *(*class_get_name)(Il2CppClass *);
     void             *(*class_get_type)(Il2CppClass *);
     Il2CppObject     *(*type_get_object)(void *);
+    Il2CppObject     *(*array_new)(Il2CppClass *, uintptr_t);
 } il;
 
 // Managed object layouts (v24 / Unity 2019.4, LP64). Only the fields read here.
@@ -65,6 +66,7 @@ static int mprobe_init(void) {
     BIND(class_get_name,            "il2cpp_class_get_name");
     BIND(class_get_type,            "il2cpp_class_get_type");
     BIND(type_get_object,           "il2cpp_type_get_object");
+    BIND(array_new,                 "il2cpp_array_new");
 #undef BIND
     g_state = 1;
     return 1;
@@ -1368,8 +1370,418 @@ void kl_mprobe_nexus_frame_budget(unsigned frame) {
     }
 }
 
+// KL_PROBE_LINES=1 — every KL_PROBE_LINES_EVERY frames (default 300) from frame
+// 600: each LineRenderer the game has switched on, by name with its first
+// three ancestors, whether it renders and is visible, its point count, first
+// and last point (and whether those are world space), start colour and width.
+// For "a green line across the play area that does not move" (Synth Riders,
+// 2026-10-15): which object it is, read off the running scene instead of
+// guessed. Diagnostic only, off unless asked for.
+static void probe_lines(unsigned frame) {
+    static const MethodInfo *m_find, *m_name, *m_tf, *m_parent, *m_en, *m_vis,
+                            *m_cnt, *m_pos, *m_ws, *m_col, *m_w, *m_tp, *m_cam, *m_wpos;
+    static Il2CppObject *lr_type;
+    static Il2CppClass *v3_class;
+    static int resolved;
+    if (!resolved) {
+        resolved = 1;
+        m_find   = find_method("UnityEngine", "Object", "FindObjectsOfType", 1);
+        m_name   = find_method("UnityEngine", "Object", "get_name", 0);
+        m_tf     = find_method("UnityEngine", "Component", "get_transform", 0);
+        m_parent = find_method("UnityEngine", "Transform", "get_parent", 0);
+        m_en     = find_method("UnityEngine", "Renderer", "get_enabled", 0);
+        m_vis    = find_method("UnityEngine", "Renderer", "get_isVisible", 0);
+        m_cnt    = find_method("UnityEngine", "LineRenderer", "get_positionCount", 0);
+        m_pos    = find_method("UnityEngine", "LineRenderer", "GetPositions", 1);
+        m_ws     = find_method("UnityEngine", "LineRenderer", "get_useWorldSpace", 0);
+        m_col    = find_method("UnityEngine", "LineRenderer", "get_startColor", 0);
+        m_w      = find_method("UnityEngine", "LineRenderer", "get_widthMultiplier", 0);
+        m_tp     = find_method("UnityEngine", "Transform", "TransformPoint", 1);
+        m_cam    = find_method("UnityEngine", "Camera", "get_main", 0);
+        m_wpos   = find_method("UnityEngine", "Transform", "get_position", 0);
+        v3_class = find_class("UnityEngine", "Vector3");
+        Il2CppClass *k = find_class("UnityEngine", "LineRenderer");
+        if (k) lr_type = il.type_get_object(il.class_get_type(k));
+    }
+    if (!m_find || !lr_type) return;
+    {
+        // Where the head is, to read the lines against.
+        Il2CppObject *cam = invoke(m_cam, NULL, "Camera.main"), *o, *ct;
+        float c[3] = {0};
+        if (cam && (ct = invoke_on(cam, m_tf, NULL, "transform")) && (o = invoke_on(ct, m_wpos, NULL, "position")))
+            memcpy(c, il.object_unbox(o), sizeof c);
+        fprintf(stderr, "  [mprobe f%u] camera at (%.2f %.2f %.2f)\n", frame, (double)c[0], (double)c[1], (double)c[2]);
+    }
+    void *ta[1] = { lr_type };
+    Il2CppObject *arr = invoke(m_find, ta, "FindObjectsOfType(LineRenderer)");
+    if (!arr) return;
+    int n = (int)il.array_length(arr);
+    Il2CppObject **items = (Il2CppObject **)((uint8_t *)arr + 0x20);   // Il2CppArray: elements after header
+    fprintf(stderr, "  [mprobe f%u] lines: %d LineRenderer(s) switched on\n", frame, n);
+    for (int i = 0; i < n && i < 64; i++) {
+        Il2CppObject *lr = items[i];
+        if (!lr) continue;
+        Il2CppObject *o;
+        int en = (o = invoke_on(lr, m_en, NULL, "enabled")) ? *(uint8_t *)il.object_unbox(o) : -1;
+        int vis = (o = invoke_on(lr, m_vis, NULL, "isVisible")) ? *(uint8_t *)il.object_unbox(o) : -1;
+        int cnt = (o = invoke_on(lr, m_cnt, NULL, "positionCount")) ? *(int32_t *)il.object_unbox(o) : -1;
+        int ws = (o = invoke_on(lr, m_ws, NULL, "useWorldSpace")) ? *(uint8_t *)il.object_unbox(o) : -1;
+        float col[4] = {0}, w = 0, a[3] = {0}, b[3] = {0}, mid[3] = {0};
+        if ((o = invoke_on(lr, m_col, NULL, "startColor"))) memcpy(col, il.object_unbox(o), sizeof col);
+        if ((o = invoke_on(lr, m_w, NULL, "widthMultiplier"))) w = *(float *)il.object_unbox(o);
+        Il2CppObject *tf0 = invoke_on(lr, m_tf, NULL, "transform");
+        if (cnt > 0 && vis == 1 && m_pos && v3_class && il.array_new) {
+            Il2CppObject *pa = il.array_new(v3_class, (uintptr_t)cnt);
+            void *aa[1] = { pa };
+            if (pa && invoke_on(lr, m_pos, aa, "GetPositions")) {
+                const float *v = (const float *)((uint8_t *)pa + 0x20);
+                memcpy(a, v, sizeof a); memcpy(mid, v + 3 * (cnt / 2), sizeof mid); memcpy(b, v + 3 * (cnt - 1), sizeof b);
+                if (ws == 0 && tf0 && m_tp) {                 // local: to world
+                    float *pts[3] = { a, mid, b };
+                    for (int q = 0; q < 3; q++) {
+                        void *ta2[1] = { pts[q] };
+                        if ((o = invoke_on(tf0, m_tp, ta2, "TransformPoint"))) memcpy(pts[q], il.object_unbox(o), 12);
+                    }
+                }
+            }
+        }
+        char chain[256] = "", nm[64];
+        Il2CppObject *t = invoke_on(lr, m_tf, NULL, "transform");
+        for (int d = 0; t && d < 4; d++) {
+            Il2CppObject *s2 = invoke_on(t, m_name, NULL, "name");
+            str_ascii(s2, nm, sizeof nm);
+            size_t L = strlen(chain);
+            snprintf(chain + L, sizeof chain - L, "%s%s", d ? " < " : "", nm);
+            t = invoke_on(t, m_parent, NULL, "parent");
+        }
+        if (vis != 1) continue;
+        fprintf(stderr, "  [mprobe f%u]   line %d: %s | on %d visible %d | %d pts %s, world (%.2f %.2f %.2f) .. "
+                        "(%.2f %.2f %.2f) .. (%.2f %.2f %.2f) | colour %.2f %.2f %.2f %.2f | width %.3f\n",
+                frame, i, chain, en, vis, cnt, ws == 1 ? "world" : ws == 0 ? "local" : "?",
+                (double)a[0], (double)a[1], (double)a[2], (double)mid[0], (double)mid[1], (double)mid[2],
+                (double)b[0], (double)b[1], (double)b[2],
+                (double)col[0], (double)col[1], (double)col[2], (double)col[3], (double)w);
+    }
+}
+
+// ...and every visible Renderer, of any type, whose world bounds are long and
+// thin (one extent over 0.5 m, i.e. over a metre across, and another under
+// 2.5 cm): a line on screen that is not a LineRenderer (Synth Riders: none was
+// visible while its green line was). Name with three ancestors, the renderer's
+// own class, bounds centre and size.
+static void probe_thin_renderers(unsigned frame) {
+    static const MethodInfo *m_find, *m_name, *m_tf, *m_parent, *m_vis, *m_bounds;
+    static Il2CppObject *r_type;
+    static int resolved;
+    if (!resolved) {
+        resolved = 1;
+        m_find   = find_method("UnityEngine", "Object", "FindObjectsOfType", 1);
+        m_name   = find_method("UnityEngine", "Object", "get_name", 0);
+        m_tf     = find_method("UnityEngine", "Component", "get_transform", 0);
+        m_parent = find_method("UnityEngine", "Transform", "get_parent", 0);
+        m_vis    = find_method("UnityEngine", "Renderer", "get_isVisible", 0);
+        m_bounds = find_method("UnityEngine", "Renderer", "get_bounds", 0);
+        Il2CppClass *k = find_class("UnityEngine", "Renderer");
+        if (k) r_type = il.type_get_object(il.class_get_type(k));
+    }
+    if (!m_find || !r_type || !m_bounds) return;
+    void *ta[1] = { r_type };
+    Il2CppObject *arr = invoke(m_find, ta, "FindObjectsOfType(Renderer)");
+    if (!arr) return;
+    int n = (int)il.array_length(arr), vis_n = 0, thin_n = 0;
+    Il2CppObject **items = (Il2CppObject **)((uint8_t *)arr + 0x20);
+    for (int i = 0; i < n && i < 4096; i++) {
+        Il2CppObject *r = items[i], *o;
+        if (!r) continue;
+        if (!(o = invoke_on(r, m_vis, NULL, "isVisible")) || !*(uint8_t *)il.object_unbox(o)) continue;
+        vis_n++;
+        float bb[6] = {0};                                    // Bounds: centre, extents
+        if (!(o = invoke_on(r, m_bounds, NULL, "bounds"))) continue;
+        memcpy(bb, il.object_unbox(o), sizeof bb);
+        float ex[3] = { bb[3], bb[4], bb[5] }, mx = 0, mn = 1e9f;
+        for (int k = 0; k < 3; k++) { if (ex[k] > mx) mx = ex[k]; if (ex[k] < mn) mn = ex[k]; }
+        if (!(mx > 0.5f && mn < 0.025f)) continue;
+        if (thin_n++ >= 20) continue;
+        char chain[256] = "", nm[64];
+        Il2CppObject *t = invoke_on(r, m_tf, NULL, "transform");
+        for (int d = 0; t && d < 4; d++) {
+            Il2CppObject *s2 = invoke_on(t, m_name, NULL, "name");
+            str_ascii(s2, nm, sizeof nm);
+            size_t L = strlen(chain);
+            snprintf(chain + L, sizeof chain - L, "%s%s", d ? " < " : "", nm);
+            t = invoke_on(t, m_parent, NULL, "parent");
+        }
+        Il2CppClass *kc = il.object_get_class(r);
+        fprintf(stderr, "  [mprobe f%u]   thin %s: %s | centre (%.2f %.2f %.2f) size (%.2f %.2f %.2f)\n",
+                frame, kc ? il.class_get_name(kc) : "?", chain,
+                (double)bb[0], (double)bb[1], (double)bb[2],
+                (double)(2 * ex[0]), (double)(2 * ex[1]), (double)(2 * ex[2]));
+    }
+    fprintf(stderr, "  [mprobe f%u] renderers: %d switched on, %d visible, %d long and thin\n",
+            frame, n, vis_n, thin_n);
+}
+
+// ...and every visible Renderer whose material is GREEN — the one thing known
+// for sure about Synth Riders' stray line. Its sharedMaterial's _Color,
+// _BaseColor, _TintColor, _EmissionColor, _MainColor where the shader has them;
+// green: G over 0.5 and over twice R and B. Class, name with ancestors, shader
+// name, the property and its value.
+static void probe_green_renderers(unsigned frame) {
+    static const MethodInfo *m_find, *m_name, *m_tf, *m_parent, *m_vis, *m_mat, *m_has, *m_getc,
+                            *m_shader;
+    static Il2CppObject *r_type;
+    static Il2CppObject *pname[5];
+    static int resolved;
+    static const char *const props[5] = { "_Color", "_BaseColor", "_TintColor", "_EmissionColor", "_MainColor" };
+    if (!resolved) {
+        resolved = 1;
+        m_find   = find_method("UnityEngine", "Object", "FindObjectsOfType", 1);
+        m_name   = find_method("UnityEngine", "Object", "get_name", 0);
+        m_tf     = find_method("UnityEngine", "Component", "get_transform", 0);
+        m_parent = find_method("UnityEngine", "Transform", "get_parent", 0);
+        m_vis    = find_method("UnityEngine", "Renderer", "get_isVisible", 0);
+        m_mat    = find_method("UnityEngine", "Renderer", "get_sharedMaterial", 0);
+        m_shader = find_method("UnityEngine", "Material", "get_shader", 0);
+        Il2CppClass *mk = find_class("UnityEngine", "Material");
+        if (mk) {
+            // HasProperty(string) and GetColor(string): the overload with a string.
+            void *it = NULL; const MethodInfo *mm;
+            typedef const MethodInfo *(*gm_fn)(Il2CppClass *, void **);
+            typedef const char *(*mn_fn)(const MethodInfo *);
+            typedef uint32_t (*pc_fn)(const MethodInfo *);
+            typedef void *(*pt_fn)(const MethodInfo *, uint32_t);
+            typedef const char *(*tn_fn)(void *);
+            kl_image *img = kl_find_image("libil2cpp.so");
+            gm_fn gm = (gm_fn)kl_sym(img, "il2cpp_class_get_methods");
+            mn_fn mn = (mn_fn)kl_sym(img, "il2cpp_method_get_name");
+            pc_fn pc = (pc_fn)kl_sym(img, "il2cpp_method_get_param_count");
+            pt_fn pt = (pt_fn)kl_sym(img, "il2cpp_method_get_param");
+            tn_fn tn = (tn_fn)kl_sym(img, "il2cpp_type_get_name");
+            while (img && gm && mn && pc && pt && tn && (mm = gm(mk, &it))) {
+                const char *nm = mn(mm);
+                if (pc(mm) != 1) continue;
+                const char *ty = tn(pt(mm, 0));
+                if (!ty || strcmp(ty, "System.String")) continue;
+                if (!strcmp(nm, "HasProperty")) m_has = mm;
+                if (!strcmp(nm, "GetColor"))    m_getc = mm;
+            }
+        }
+        for (int i = 0; i < 5; i++) pname[i] = il.string_new(props[i]);
+        Il2CppClass *k = find_class("UnityEngine", "Renderer");
+        if (k) r_type = il.type_get_object(il.class_get_type(k));
+        fprintf(stderr, "  [mprobe] green census: HasProperty %s, GetColor %s\n",
+                m_has ? "found" : "MISSING", m_getc ? "found" : "MISSING");
+    }
+    if (!m_find || !r_type || !m_mat || !m_has || !m_getc) return;
+    void *ta[1] = { r_type };
+    Il2CppObject *arr = invoke(m_find, ta, "FindObjectsOfType(Renderer)");
+    if (!arr) return;
+    int n = (int)il.array_length(arr), green_n = 0;
+    Il2CppObject **items = (Il2CppObject **)((uint8_t *)arr + 0x20);
+    for (int i = 0; i < n && i < 4096; i++) {
+        Il2CppObject *r = items[i], *o, *mat;
+        if (!r) continue;
+        if (!(o = invoke_on(r, m_vis, NULL, "isVisible")) || !*(uint8_t *)il.object_unbox(o)) continue;
+        if (!(mat = invoke_on(r, m_mat, NULL, "sharedMaterial"))) continue;
+        for (int p = 0; p < 5; p++) {
+            void *pa[1] = { pname[p] };
+            if (!(o = invoke_on(mat, m_has, pa, "HasProperty")) || !*(uint8_t *)il.object_unbox(o)) continue;
+            float c[4] = {0};
+            if (!(o = invoke_on(mat, m_getc, pa, "GetColor"))) continue;
+            memcpy(c, il.object_unbox(o), sizeof c);
+            if (!(c[1] > 0.5f && c[1] > 2 * c[0] && c[1] > 2 * c[2])) continue;
+            if (green_n++ >= 20) break;
+            char chain[256] = "", nm[64], sh[96] = "?";
+            Il2CppObject *t = invoke_on(r, m_tf, NULL, "transform");
+            for (int d = 0; t && d < 4; d++) {
+                Il2CppObject *s2 = invoke_on(t, m_name, NULL, "name");
+                str_ascii(s2, nm, sizeof nm);
+                size_t L = strlen(chain);
+                snprintf(chain + L, sizeof chain - L, "%s%s", d ? " < " : "", nm);
+                t = invoke_on(t, m_parent, NULL, "parent");
+            }
+            Il2CppObject *shd = invoke_on(mat, m_shader, NULL, "shader");
+            if (shd) str_ascii(invoke_on(shd, m_name, NULL, "name"), sh, sizeof sh);
+            Il2CppClass *kc = il.object_get_class(r);
+            fprintf(stderr, "  [mprobe f%u]   green %s: %s | shader %s | %s %.2f %.2f %.2f %.2f\n",
+                    frame, kc ? il.class_get_name(kc) : "?", chain, sh, props[p],
+                    (double)c[0], (double)c[1], (double)c[2], (double)c[3]);
+            break;
+        }
+    }
+    fprintf(stderr, "  [mprobe f%u] green renderers: %d\n", frame, green_n);
+}
+
+// A method of `k` named `name` whose `argc` parameters' first is of type `ty0`.
+static const MethodInfo *find_method_typed(Il2CppClass *k, const char *name, uint32_t argc, const char *ty0);
+static const MethodInfo *find_method_str(Il2CppClass *k, const char *name, uint32_t argc) {
+    return find_method_typed(k, name, argc, "System.String");
+}
+static const MethodInfo *find_method_typed(Il2CppClass *k, const char *name, uint32_t argc, const char *ty0) {
+    kl_image *img = kl_find_image("libil2cpp.so");
+    if (!img || !k) return NULL;
+    typedef const MethodInfo *(*gm_fn)(Il2CppClass *, void **);
+    typedef const char *(*mn_fn)(const MethodInfo *);
+    typedef uint32_t (*pc_fn)(const MethodInfo *);
+    typedef void *(*pt_fn)(const MethodInfo *, uint32_t);
+    typedef const char *(*tn_fn)(void *);
+    gm_fn gm = (gm_fn)kl_sym(img, "il2cpp_class_get_methods");
+    mn_fn mn = (mn_fn)kl_sym(img, "il2cpp_method_get_name");
+    pc_fn pc = (pc_fn)kl_sym(img, "il2cpp_method_get_param_count");
+    pt_fn pt = (pt_fn)kl_sym(img, "il2cpp_method_get_param");
+    tn_fn tn = (tn_fn)kl_sym(img, "il2cpp_type_get_name");
+    void *it = NULL; const MethodInfo *mm;
+    while (gm && mn && pc && pt && tn && (mm = gm(k, &it))) {
+        if (pc(mm) != argc || strcmp(mn(mm), name)) continue;
+        const char *ty = tn(pt(mm, 0));
+        if (ty && !strcmp(ty, ty0)) return mm;
+    }
+    return NULL;
+}
+
+// KL_PROBE_RAILS: around song start (frames 800..1400, every 15), the visible
+// rail LineRenderers by name, counted — how long Synth Riders' rails show at
+// the start of a song — and, once, every property of the first visible green
+// ("One Hand") rail's material with its value: whatever hides a pooled rail on
+// a Quest is one of these. Lighter than KL_PROBE_LINES (no renderer census).
+static void probe_rails(unsigned frame) {
+    static const MethodInfo *m_find, *m_name, *m_vis, *m_mat, *m_shader, *m_pcount, *m_pname, *m_ptype,
+                            *m_getf, *m_getv, *m_getpos, *m_cnt, *m_ws, *m_tf, *m_tp, *m_wpos, *m_cam, *m_gofind;
+    static Il2CppClass *v3k;
+    static Il2CppObject *lr_type;
+    static int resolved, dumped;
+    if (!resolved) {
+        resolved = 1;
+        m_find   = find_method("UnityEngine", "Object", "FindObjectsOfType", 1);
+        m_name   = find_method("UnityEngine", "Object", "get_name", 0);
+        m_vis    = find_method("UnityEngine", "Renderer", "get_isVisible", 0);
+        m_mat    = find_method("UnityEngine", "Renderer", "get_sharedMaterial", 0);
+        m_shader = find_method("UnityEngine", "Material", "get_shader", 0);
+        m_pcount = find_method("UnityEngine", "Shader", "GetPropertyCount", 0);
+        m_pname  = find_method("UnityEngine", "Shader", "GetPropertyName", 1);
+        m_ptype  = find_method("UnityEngine", "Shader", "GetPropertyType", 1);
+        Il2CppClass *mk = find_class("UnityEngine", "Material");
+        m_getf   = find_method_str(mk, "GetFloat", 1);
+        m_getv   = find_method_str(mk, "GetVector", 1);
+        m_getpos = find_method_typed(find_class("UnityEngine", "LineRenderer"), "GetPositions", 1, "UnityEngine.Vector3[]");
+        m_cnt    = find_method("UnityEngine", "LineRenderer", "get_positionCount", 0);
+        m_ws     = find_method("UnityEngine", "LineRenderer", "get_useWorldSpace", 0);
+        m_tf     = find_method("UnityEngine", "Component", "get_transform", 0);
+        m_tp     = find_method("UnityEngine", "Transform", "TransformPoint", 1);
+        m_wpos   = find_method("UnityEngine", "Transform", "get_position", 0);
+        m_cam    = find_method("UnityEngine", "Camera", "get_main", 0);
+        m_gofind = find_method("UnityEngine", "GameObject", "Find", 1);
+        v3k      = find_class("UnityEngine", "Vector3");
+        fprintf(stderr, "  [mprobe] rails: GetPositions(Vector3[]) %s\n", m_getpos ? "found" : "MISSING");
+        Il2CppClass *k = find_class("UnityEngine", "LineRenderer");
+        if (k) lr_type = il.type_get_object(il.class_get_type(k));
+    }
+    if (!m_find || !lr_type) return;
+    void *ta[1] = { lr_type };
+    Il2CppObject *arr = invoke(m_find, ta, "FindObjectsOfType(LineRenderer)");
+    if (!arr) return;
+    int n = (int)il.array_length(arr), one = 0, two = 0, left = 0, right = 0, other = 0, shown = 0;
+    Il2CppObject **items = (Il2CppObject **)((uint8_t *)arr + 0x20);
+    // Where the head and the hands are, to read the rails against.
+    {
+        Il2CppObject *o, *t;
+        float c[3] = {0}, l[3] = {0}, r[3] = {0};
+        Il2CppObject *cam = invoke(m_cam, NULL, "Camera.main");
+        if (cam && (t = invoke_on(cam, m_tf, NULL, "transform")) && (o = invoke_on(t, m_wpos, NULL, "position")))
+            memcpy(c, il.object_unbox(o), 12);
+        const char *names[2] = { "LeftHand", "RightHand" }; float *dst[2] = { l, r };
+        for (int h = 0; h < 2 && m_gofind; h++) {
+            void *fa[1] = { il.string_new(names[h]) };
+            Il2CppObject *go = invoke(m_gofind, fa, "GameObject.Find");
+            static const MethodInfo *m_got;
+            if (!m_got) m_got = find_method("UnityEngine", "GameObject", "get_transform", 0);
+            if (go && (t = invoke_on(go, m_got, NULL, "transform")) && (o = invoke_on(t, m_wpos, NULL, "position")))
+                memcpy(dst[h], il.object_unbox(o), 12);
+        }
+        fprintf(stderr, "  [mprobe f%u] head (%.2f %.2f %.2f) left hand (%.2f %.2f %.2f) right hand (%.2f %.2f %.2f)\n",
+                frame, (double)c[0], (double)c[1], (double)c[2], (double)l[0], (double)l[1], (double)l[2],
+                (double)r[0], (double)r[1], (double)r[2]);
+    }
+    for (int i = 0; i < n && i < 256; i++) {
+        Il2CppObject *lr = items[i], *o;
+        if (!lr || !(o = invoke_on(lr, m_vis, NULL, "isVisible")) || !*(uint8_t *)il.object_unbox(o)) continue;
+        char nm[64];
+        str_ascii(invoke_on(lr, m_name, NULL, "name"), nm, sizeof nm);
+        if (strstr(nm, "One Hand") && shown < 2 && m_getpos && v3k && il.array_new) {
+            shown++;
+            int cnt = (o = invoke_on(lr, m_cnt, NULL, "positionCount")) ? *(int32_t *)il.object_unbox(o) : 0;
+            int ws = (o = invoke_on(lr, m_ws, NULL, "useWorldSpace")) ? *(uint8_t *)il.object_unbox(o) : -1;
+            float pts[3][3] = {{0}};
+            if (cnt > 0) {
+                Il2CppObject *pa = il.array_new(v3k, (uintptr_t)cnt);
+                void *aa[1] = { pa };
+                if (pa && invoke_on(lr, m_getpos, aa, "GetPositions")) {
+                    const float *v = (const float *)((uint8_t *)pa + 0x20);
+                    memcpy(pts[0], v, 12); memcpy(pts[1], v + 3 * (cnt / 2), 12); memcpy(pts[2], v + 3 * (cnt - 1), 12);
+                    Il2CppObject *t = invoke_on(lr, m_tf, NULL, "transform");
+                    for (int q = 0; ws == 0 && t && q < 3; q++) {
+                        void *ta2[1] = { pts[q] };
+                        if ((o = invoke_on(t, m_tp, ta2, "TransformPoint"))) memcpy(pts[q], il.object_unbox(o), 12);
+                    }
+                }
+            }
+            fprintf(stderr, "  [mprobe f%u]   %s: %d pts %s, world (%.2f %.2f %.2f) .. (%.2f %.2f %.2f) .. (%.2f %.2f %.2f)\n",
+                    frame, nm, cnt, ws == 1 ? "world" : "local",
+                    (double)pts[0][0], (double)pts[0][1], (double)pts[0][2], (double)pts[1][0], (double)pts[1][1],
+                    (double)pts[1][2], (double)pts[2][0], (double)pts[2][1], (double)pts[2][2]);
+        }
+        if (strstr(nm, "One Hand")) one++; else if (strstr(nm, "Two Hand")) two++;
+        else if (strstr(nm, "Left Hand")) left++; else if (strstr(nm, "Right Hand")) right++; else other++;
+        if (!dumped && strstr(nm, "One Hand") && m_mat && m_shader && m_pcount && m_pname && m_ptype) {
+            dumped = 1;
+            Il2CppObject *mat = invoke_on(lr, m_mat, NULL, "sharedMaterial"), *shd;
+            if (!mat || !(shd = invoke_on(mat, m_shader, NULL, "shader"))) continue;
+            char sh[96];
+            str_ascii(invoke_on(shd, m_name, NULL, "name"), sh, sizeof sh);
+            int pc = (o = invoke_on(shd, m_pcount, NULL, "GetPropertyCount")) ? *(int32_t *)il.object_unbox(o) : 0;
+            fprintf(stderr, "  [mprobe f%u] rail material: shader %s, %d properties\n", frame, sh, pc);
+            for (int32_t p = 0; p < pc && p < 64; p++) {
+                void *pa[1] = { &p };
+                Il2CppObject *pn = invoke_on(shd, m_pname, pa, "GetPropertyName");
+                int ty = (o = invoke_on(shd, m_ptype, pa, "GetPropertyType")) ? *(int32_t *)il.object_unbox(o) : -1;
+                char pnm[64];
+                str_ascii(pn, pnm, sizeof pnm);
+                void *na[1] = { pn };
+                if ((ty == 2 || ty == 3 || ty == 5) && m_getf && (o = invoke_on(mat, m_getf, na, "GetFloat")))
+                    fprintf(stderr, "  [mprobe]     %s = %.4f\n", pnm, (double)*(float *)il.object_unbox(o));
+                else if ((ty == 0 || ty == 1) && m_getv && (o = invoke_on(mat, m_getv, na, "GetVector"))) {
+                    float v[4]; memcpy(v, il.object_unbox(o), sizeof v);
+                    fprintf(stderr, "  [mprobe]     %s = (%.3f %.3f %.3f %.3f)\n", pnm,
+                            (double)v[0], (double)v[1], (double)v[2], (double)v[3]);
+                } else
+                    fprintf(stderr, "  [mprobe]     %s (type %d)\n", pnm, ty);
+            }
+        }
+    }
+    fprintf(stderr, "  [mprobe f%u] rails visible: one-hand %d, two-hand %d, left %d, right %d, other lines %d\n",
+            frame, one, two, left, right, other);
+}
+
 void kl_mprobe_tick(unsigned frame) {
     shave_input_bridge();
+    {
+        static int on = -1;
+        if (on < 0) on = kl_env_on("KL_PROBE_RAILS", 0);
+        if (on && frame >= 800 && frame <= 1400 && frame % 15 == 0 && mprobe_init()) probe_rails(frame);
+    }
+    {
+        static int on = -1; static unsigned every;
+        if (on < 0) {
+            on = kl_env_on("KL_PROBE_LINES", 0);
+            every = (unsigned)kl_env_uint("KL_PROBE_LINES_EVERY", 150);
+            if (!every) every = 150;
+        }
+        if (on && frame >= 600 && frame % every == 0 && mprobe_init()) {
+            probe_lines(frame);
+            probe_thin_renderers(frame);
+            probe_green_renderers(frame);
+        }
+    }
     // Independent of KL_PROBE_INPUT and of KL_PROBE_FROM: this one has to land
     // BEFORE the throw it exists to describe, and the throw here is on the
     // first frame. It runs once, on the first tick that finds IL2CPP up.
