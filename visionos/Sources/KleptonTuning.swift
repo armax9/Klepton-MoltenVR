@@ -409,7 +409,7 @@ final class KleptonRendering: ObservableObject {
     /// (KleptonMetalFXPreset.movedByHand).
     var renderScaleByHand: Binding<Double> {
         Binding(get: { self.renderScale },
-                set: { self.renderScale = $0; KleptonMetalFXPreset().movedByHand() })
+                set: KleptonMetalFXPreset().byHand { self.renderScale = $0 })
     }
 
     /// The target's own default (targets.py "render_scale", baked into
@@ -876,12 +876,10 @@ extension KleptonRendering {
     }
 }
 
+/// The picture's finer dials, under Advanced and in the developer window's
+/// Rendering. The MetalFX switch is not here: it is under Picture beside
+/// Resolution on every page (PicturePrimary), and this only points there.
 struct RenderingView: View {
-    /// Whether the MetalFX switch is here. A player's settings page has it under
-    /// Picture › Resolution (PlayerSettingsView), so its Advanced copy of this
-    /// view only points there; the developer window and Alyx, whose page has no
-    /// Picture box, keep the switch here.
-    var metalFXSwitch = true
     @ObservedObject private var rendering = KleptonRendering.shared
 
     var body: some View {
@@ -924,21 +922,52 @@ struct RenderingView: View {
                  + "halves the rate head movement is corrected at. Takes "
                  + "effect the next time the app starts.")
                 .font(.caption).foregroundStyle(.secondary)
-            if !metalFXSwitch {
-                if KleptonMetalFX.deviceSupported {
-                    Text(klT("MetalFX upscaling is under Picture, below Resolution.",
-                             "MetalFX-Hochskalieren steht unter Bild, unter der Auflösung."))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            } else {
-                MetalFXSwitch(title: "MetalFX upscaling", hintFont: .caption)
-                Text(klT("Sharpens the picture when the resolution the game was started with is below 100%: the game draws small and Apple's scaler stretches it to eye size instead of a plain linear stretch. Costs some graphics time. Switching takes effect on the next frame; a new resolution only with the next start. Works in every game: Vulkan and GL, through Meta's interface or OpenXR, with foveated rendering too. The metrics panel shows whether it is upscaling.",
-                         "Schärft das Bild, wenn die Auflösung, mit der das Spiel gestartet wurde, unter 100 % liegt: Das Spiel zeichnet klein, und Apples Scaler streckt es auf Augengröße statt einer einfachen linearen Streckung. Kostet etwas Grafikzeit. Das Umschalten wirkt ab dem nächsten Bild, eine neue Auflösung erst beim nächsten Start. Wirkt in jedem Spiel: Vulkan und GL, über Metas Schnittstelle oder OpenXR, auch mit Foveated Rendering. Ob hochskaliert wird, zeigt das Leistungs-Panel."))
+            if KleptonMetalFX.deviceSupported {
+                Text(klT("MetalFX upscaling is under Picture, below Resolution.",
+                         "MetalFX-Hochskalieren steht unter Bild, unter der Auflösung."))
                     .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// Resolution and the MetalFX switch, together, in the Picture box of every
+/// game's settings page (Alyx's too, beside its Graphics presets) and of the
+/// developer window. What shows is KleptonPictureControls.primary: Resolution
+/// always, MetalFX wherever the device has the scaler, neither ever locked.
+/// Resolution is the stored klepton.renderScale through renderScaleByHand, as
+/// everywhere, so a move here is a move of the slider for the MetalFX switch.
+struct PicturePrimary: View {
+    let hintFont: Font
+    @ObservedObject private var rendering = KleptonRendering.shared
+
+    var body: some View {
+        let shown = KleptonPictureControls.primary(deviceHasScaler: KleptonMetalFX.deviceSupported)
+        VStack(alignment: .leading, spacing: 10) {
+            if shown.resolution {
+                HStack {
+                    Text(klT("Resolution", "Auflösung"))
+                    Slider(value: rendering.renderScaleByHand, in: KleptonRendering.minRenderScale...1.0, step: 0.05)
+                    Text(String(format: "%.0f%%", rendering.renderScale * 100))
+                        .monospacedDigit().frame(width: 60, alignment: .trailing)
+                }
+                .disabled(!shown.adjustable)
+                Text(klT("How finely the game is drawn. Lower it if the picture stutters when you look around. With MetalFX on, the size it enlarges.",
+                         "Wie fein das Spiel gezeichnet wird. Verringern, wenn das Bild beim Umsehen ruckelt. Mit MetalFX die Größe, die es vergrößert."))
+                    .font(hintFont).foregroundStyle(.secondary)
+            }
+            // The one MetalFX switch of a page (Advanced only points here) and
+            // the same choice as Create + Options (KleptonMetalFX).
+            if shown.metalFX {
+                MetalFXSwitch(title: klT("MetalFX upscaling", "MetalFX-Hochskalieren"), hintFont: hintFont)
+                    .disabled(!shown.adjustable)
+                Text(klT("Sharpens the picture when the resolution is below 100%: Apple's scaler enlarges it instead of a plain stretch. Costs some graphics time. Switching takes effect at once, a new resolution with the next start.",
+                         "Schärft das Bild, wenn die Auflösung unter 100 % liegt: Apples Scaler vergrößert es statt einer einfachen Streckung. Kostet etwas Grafikzeit. Das Umschalten wirkt sofort, eine neue Auflösung beim nächsten Start."))
+                    .font(hintFont).foregroundStyle(.secondary)
                 if KleptonMetalFX.onFromInstall {
                     Text(klT("On from the start in this installation: AVP Play's MetalFX setting asked for it.",
                              "In dieser Installation von Anfang an eingeschaltet: Die MetalFX-Einstellung von AVP Play hat es so verlangt."))
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(hintFont).foregroundStyle(.orange)
                 }
             }
         }

@@ -2,8 +2,9 @@
 // 100 % it sets 75 % and marks that it did; turned off it gives 100 % back only
 // while that mark stands (no move of the slider since). A resolution the player
 // chose is left alone either way. The mark lives in UserDefaults, so a fresh
-// value over the same store stands in for a new start of the app. Run on the
-// Mac. `make mfxpreset`, in `make check`.
+// value over the same store stands in for a new start of the app. Also what a
+// Picture box shows of the two (KleptonPictureControls). Run on the Mac.
+// `make mfxpreset`, in `make check`.
 import Foundation
 
 @main
@@ -87,6 +88,33 @@ struct MetalFXPresetCheck {
             let p = KleptonMetalFXPreset(defaults: freshStore().0)
             _ = p.switched(on: true, from: 1.0)
             expect("(e) lowered, resolution reset elsewhere to 90%, then off", p.switched(on: false, from: 0.9), nil)
+        }
+        // (f) The setter every Resolution slider writes through (byHand: the
+        // Picture box's, Alyx's beside the switch, Advanced's): it stores the
+        // value into the one setting and counts as a move, even back to 75 %.
+        for moved in [0.75, 0.6] {
+            let p = KleptonMetalFXPreset(defaults: freshStore().0)
+            var scale = 1.0
+            let slider = p.byHand { scale = $0 }
+            if let r = p.switched(on: true, from: scale) { scale = r }
+            slider(moved)
+            expect(String(format: "(f) slider beside the switch moved to %.0f%%: stored", moved * 100), scale, moved)
+            expectMark(String(format: "(f) slider beside the switch moved to %.0f%%", moved * 100), p, false)
+            expect(String(format: "(f) lowered, slider beside the switch moved to %.0f%%, then off", moved * 100),
+                   p.switched(on: false, from: scale), nil)
+        }
+        // (g) The Picture box of every page (KleptonPictureControls.primary, what
+        // PicturePrimary shows): Resolution always, MetalFX wherever the device
+        // has the scaler, neither locked. The rule has no other input — not the
+        // game, not Alyx's Graphics preset — so no preset hides or locks them.
+        for scaler in [true, false] {
+            let c = KleptonPictureControls.primary(deviceHasScaler: scaler)
+            let want = KleptonPictureControls(resolution: true, metalFX: scaler, adjustable: true)
+            let ok = c == want
+            print("  \(ok ? "ok  " : "FAIL") (g) Picture box, scaler \(scaler ? "present" : "absent"): "
+                  + "Resolution \(c.resolution ? "shown" : "hidden"), MetalFX \(c.metalFX ? "shown" : "hidden"), "
+                  + (c.adjustable ? "adjustable" : "locked"))
+            if !ok { failed += 1 }
         }
 
         for name in suites { UserDefaults.standard.removePersistentDomain(forName: name) }

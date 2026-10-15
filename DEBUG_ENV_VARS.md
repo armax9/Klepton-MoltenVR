@@ -3946,9 +3946,10 @@ audio path that has shipped: both are linked in, and
   both: MetalFX on / off", and redraws at once after a tap: *MetalFX*, *Path*
   and *Output* show the new state. It is the same choice as *Settings ›
   Picture › MetalFX upscaling*, stored the same way, and the switch there
-  shows it at once. *Advanced › Picture, in detail* only points to it (it
-  keeps the switch for Alyx, whose page has no Picture box, and in the
-  developer window). Anywhere else the
+  shows it at once. Every game's Picture box has *Resolution* and this
+  switch together, Alyx's too (beside its Graphics presets, which neither
+  hide nor lock them), and so does the developer window's; *Advanced ›
+  Picture, in detail* only points to it. Anywhere else the
   tap does nothing (`[metalfx] tap of Create + Options: nothing to switch` in
   the log). It replaces the live XR head prediction switch test builds had.
 
