@@ -717,6 +717,14 @@ Built for the loading-pace investigation; all default off.
   **isolation** — `KL_DLOPEN_REFUSE=phonon` takes Steam Audio out of a VRChat
   run, which is the difference between reaching the frame loop and not.
   Nothing is refused by default and every refusal is named.
+- `KL_METAXR_AUDIO_STUB=0|1` — serve `libMetaXRAudioUnity` (refused on every
+  guest: it trips AMFI) as a library that is there, whose every function
+  returns 0 (ovrSuccess) and whose version calls answer the shipped plugin's
+  version. On by default for `walkabout` only: its audio setup calls the SDK's
+  managed interface and each P/Invoke behind it threw DllNotFoundException,
+  every frame, cutting those methods short. The engine registers no
+  spatializer either way. `0` is the plain refusal again; `1` serves the stub
+  on any target.
 - `KL_TRACE_DLOPEN_FRAMES=1` — on a FAILED guest `dlopen`, walk the guest stack
   and print it. A P/Invoke that cannot resolve throws from IL2CPP's resolver and
   the managed method that declared it is named nowhere in the exception; the
@@ -2629,6 +2637,14 @@ reads no knobs).
 - `KL_AUDIO_TRACE=1` — one line every 200 writes: input/output frame counts,
   ring fill in frames and ms, underruns. What to turn on when the sound is
   present but wrong.
+- `KL_AUDIO_MIX_UNLOCK=0|1` — with two output streams mixing into the ring, let
+  a writer that waits for room nap *outside* the write lock, so the other
+  stream is not held up behind it. Default on for Pistol Whip
+  (x2104963472963790) and Steam Link (steamlink-vr), whose shell stream and VR
+  client stream together fell behind real time — dropouts every few seconds.
+  While two sources mix, the periodic `guest PCM so far` line is followed by
+  one line per source: its share of real time since it opened and how often it
+  fell behind the reader and was resynced.
 - `KL_SL_SILENT_YIELD=0` — (`runtime/media/kl_opensl.c`) keep feeding the
   device from an OpenSL player that has only ever produced silence while
   another same-rate player is audible. Default 1: such a player stops writing
