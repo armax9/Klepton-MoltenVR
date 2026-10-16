@@ -10340,6 +10340,7 @@ void klovrp_GetNodePoseState_entry(void);
 void klovrp_GetControllerState2_entry(void);
 void klovrp_GetControllerHapticsDesc_entry(void);
 void klovrp_GetControllerState_entry(void);
+void klovrp_GetTrackingCalibratedOrigin_entry(void);
 
 int kl_ovrp_claims(const char *soname) {
     if (!soname) return 0;
@@ -10531,6 +10532,15 @@ static uint64_t klovrp_GetTrackingTransformRawPose(float *out) {
 static uint64_t klovrp_GetTrackingCalibratedOrigin2(float *out) {
     ovrp_hit("ovrp_GetTrackingCalibratedOrigin2");
     return klovrp_pose_out_y(out, 0.0f);
+}
+
+// The 1.0 form, which Onward's OVRPlugin.cs still calls: the 28-byte ovrpPosef
+// returned BY VALUE, so the destination arrives in x8 (kl_ovrp_sret.S). The
+// real plugin (0x1595a8 in Onward's copy) is a wrapper round the 2-form that
+// stores the identity pose when that one fails; ours never does.
+void klovrp_GetTrackingCalibratedOrigin_impl(float *out) {
+    ovrp_hit("ovrp_GetTrackingCalibratedOrigin");
+    klovrp_pose_out_y(out, 0.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -10999,6 +11009,7 @@ static const struct { const char *name; void *fn; } g_ovrp_impl[] = {
     {"ovrp_GetTiledMultiResDynamic", (void *)klovrp_GetTiledMultiResDynamic},
     {"ovrp_GetTimeInSeconds", (void *)klovrp_GetTimeInSeconds},
     {"ovrp_GetTrackingCalibratedOrigin2", (void *)klovrp_GetTrackingCalibratedOrigin2},
+    {"ovrp_GetTrackingCalibratedOrigin", (void *)klovrp_GetTrackingCalibratedOrigin_entry},
     {"ovrp_GetTrackingIPDEnabled2", (void *)klovrp_GetTrackingIPDEnabled2},
     {"ovrp_GetTrackingOrientationEnabled2", (void *)klovrp_GetTrackingOrientationEnabled2},
     {"ovrp_GetTrackingOrientationSupported2", (void *)klovrp_GetTrackingOrientationSupported2},
@@ -11786,9 +11797,24 @@ static const char *const g_ovrp_absent[] = {
     "ovrp_GetControllerParametricStreamingTimingProperties",
 };
 
+// Answers in g_ovrp_impl that only one title has been seen to need. Every
+// other target resolves these names as before: the named stub, which aborts
+// with the name (or says UNSUPPORTED under KL_OVRP_UNANSWERED).
+//   ovrp_GetTrackingCalibratedOrigin — Onward (x2677344882310094), fix 50
+static int kl_ovrp_gated_out(const char *name) {
+    if (strcmp(name, "ovrp_GetTrackingCalibratedOrigin") == 0) {
+        const char *t = kl_driver_target_name();
+        return !t || strcmp(t, "x2677344882310094") != 0;
+    }
+    return 0;
+}
+
 static void *kl_ovrp_sym_inner(const char *name) {
     for (size_t i = 0; i < sizeof g_ovrp_impl / sizeof g_ovrp_impl[0]; i++)
-        if (strcmp(g_ovrp_impl[i].name, name) == 0) return g_ovrp_impl[i].fn;
+        if (strcmp(g_ovrp_impl[i].name, name) == 0) {
+            if (kl_ovrp_gated_out(name)) break;
+            return g_ovrp_impl[i].fn;
+        }
     for (size_t i = 0; i < sizeof g_ovrp_absent / sizeof g_ovrp_absent[0]; i++)
         if (strcmp(g_ovrp_absent[i], name) == 0) return NULL;
     void *shared = klovrp_shared(name);
