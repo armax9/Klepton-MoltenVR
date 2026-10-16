@@ -906,11 +906,166 @@ static klj_val klj_Canvas_init(void *env, void *self, const klj_val *a, int n) {
     return (klj_val){.l = self};
 }
 
+// What an outgoing intent names — its data URI and its target package — kept
+// beside the Intent object (whose `data` already holds the action) for the
+// intent startActivity then receives. A few slots: an app builds one intent at a
+// time.
+#define KLJ_INTENT_SLOTS 8
+static struct { void *obj; char uri[1024]; char pkg[256]; } g_intent_out[KLJ_INTENT_SLOTS];
+static unsigned g_intent_next;
+static pthread_mutex_t g_intent_mu = PTHREAD_MUTEX_INITIALIZER;
+static void klj_intent_note(void *obj, const char *uri, const char *pkg) {
+    if (!obj) return;
+    pthread_mutex_lock(&g_intent_mu);
+    int i = 0;
+    for (; i < KLJ_INTENT_SLOTS; i++) if (g_intent_out[i].obj == obj) break;
+    if (i == KLJ_INTENT_SLOTS) {
+        i = (int)(g_intent_next++ % KLJ_INTENT_SLOTS);
+        g_intent_out[i].obj = obj; g_intent_out[i].uri[0] = g_intent_out[i].pkg[0] = 0;
+    }
+    if (uri) snprintf(g_intent_out[i].uri, sizeof g_intent_out[i].uri, "%s", uri);
+    if (pkg) snprintf(g_intent_out[i].pkg, sizeof g_intent_out[i].pkg, "%s", pkg);
+    pthread_mutex_unlock(&g_intent_mu);
+}
+// A URI as the log may show it: its scheme and host ("https://open.spotify.com",
+// "ovrweb://pwa"), or only its scheme for an opaque one ("mailto:"). Never the
+// path, query, user part or port: a link can carry a token or an account.
+static const char *klj_uri_brief(const char *uri, char *out, size_t cap) {
+    if (!uri || !*uri) return "(no data)";
+    size_t sl = strspn(uri, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-.");
+    if (sl == 0 || uri[sl] != ':') return "(not a URI)";
+    if (strncmp(uri + sl, "://", 3) != 0) {
+        snprintf(out, cap, "%.*s:", (int)sl, uri);
+        return out;
+    }
+    const char *auth = uri + sl + 3;
+    size_t al = strcspn(auth, "/?#");
+    const char *host = auth;
+    for (size_t i = 0; i < al; i++) if (auth[i] == '@') host = auth + i + 1;
+    size_t hl = strcspn(host, ":/?#");
+    snprintf(out, cap, "%.*s://%.*s", (int)sl, uri, (int)hl, host);
+    return out;
+}
+// The string an android/net/Uri or ComponentName made below carries, or NULL for
+// anything else (Uri.EMPTY, the launch Intent's ComponentName, a stray pointer).
+static const char *klj_obj_str(void *p, const char *cls) {
+    klj_object *o = klj_as_object(p);
+    return (o && !strcmp(o->cls, cls)) ? (const char *)o->data : NULL;
+}
 static klj_val klj_Intent_setPackage(void *env, void *self, const klj_val *a, int n) {
     (void)env;
     const char *p = n > 0 ? klj_str(a[0].l) : NULL;
     KLJ_LOG("Intent.setPackage(\"%s\")", p ? p : "(null)");
+    klj_intent_note(self, NULL, p ? p : "");
     return (klj_val){.l = self};
+}
+// An explicit target: `new ComponentName(package, class)`, then
+// Intent.setComponent / setClassName. Only the package matters here (it is what
+// startActivity reports; DreamSpace's YouTube button goes this way, 2026-10-16),
+// so the object carries it.
+static klj_val klj_ComponentName_init(void *env, void *clazz, const klj_val *a, int n) {
+    (void)env; (void)clazz;
+    const char *pkg = n > 0 ? klj_str(a[0].l) : NULL;
+    const char *cls = n > 1 ? klj_str(a[1].l) : NULL;
+    void *obj = kl_jni_new_object("android/content/ComponentName");
+    if (!obj) return (klj_val){.l = NULL};
+    klj_as_object(obj)->data = pkg ? strdup(pkg) : NULL;
+    klj_own(obj, free);
+    KLJ_LOG("new ComponentName(\"%s\", \"%s\")", pkg ? pkg : "(null)", cls ? cls : "(null)");
+    return (klj_val){.l = obj};
+}
+static klj_val klj_Intent_setComponent(void *env, void *self, const klj_val *a, int n) {
+    (void)env;
+    const char *pkg = n > 0 ? klj_obj_str(a[0].l, "android/content/ComponentName") : NULL;
+    KLJ_LOG("Intent.setComponent(%s)", pkg ? pkg : "(null)");
+    if (pkg) klj_intent_note(self, NULL, pkg);
+    return (klj_val){.l = self};
+}
+static klj_val klj_Intent_setClassName(void *env, void *self, const klj_val *a, int n) {
+    (void)env;
+    const char *pkg = n > 0 ? klj_str(a[0].l) : NULL;
+    const char *cls = n > 1 ? klj_str(a[1].l) : NULL;
+    KLJ_LOG("Intent.setClassName(\"%s\", \"%s\")", pkg ? pkg : "(null)", cls ? cls : "(null)");
+    if (pkg) klj_intent_note(self, NULL, pkg);
+    return (klj_val){.l = self};
+}
+// Extras. A web address passed as one is taken as the page to open (a video
+// link, say); everything else is dropped, as nothing reads it back. Only the
+// key is logged, never the value.
+static klj_val klj_Intent_putExtraString(void *env, void *self, const klj_val *a, int n) {
+    (void)env;
+    const char *k = n > 0 ? klj_str(a[0].l) : NULL;
+    const char *v = n > 1 ? klj_str(a[1].l) : NULL;
+    KLJ_LOG("Intent.putExtra(\"%s\", <string>)", k ? k : "(null)");
+    if (v && (!strncmp(v, "https://", 8) || !strncmp(v, "http://", 7))) klj_intent_note(self, v, NULL);
+    return (klj_val){.l = self};
+}
+static klj_val klj_Intent_putExtraScalar(void *env, void *self, const klj_val *a, int n) {
+    (void)env;
+    const char *k = n > 0 ? klj_str(a[0].l) : NULL;
+    KLJ_LOG("Intent.putExtra(\"%s\", <value>)", k ? k : "(null)");
+    return (klj_val){.l = self};
+}
+static klj_val klj_Intent_setFlags(void *env, void *self, const klj_val *a, int n) {
+    (void)env;
+    KLJ_LOG("Intent.setFlags(0x%llx)", n > 0 ? (unsigned long long)a[0].j : 0ULL);
+    return (klj_val){.l = self};
+}
+static klj_val klj_Intent_setAction(void *env, void *self, const klj_val *a, int n) {
+    (void)env;
+    const char *s = n > 0 ? klj_str(a[0].l) : NULL;
+    klj_object *o = klj_as_object(self);
+    if (o) {
+        // An Intent's payload is its action, always ours on the heap (or none),
+        // so the one it replaces is freed and the new one goes with the object.
+        free(o->data);
+        o->data = s ? strdup(s) : NULL;   // what getAction reads
+        klj_own(self, free);
+    }
+    KLJ_LOG("Intent.setAction(\"%s\")", s ? s : "(null)");
+    return (klj_val){.l = self};
+}
+static klj_val klj_Intent_setData(void *env, void *self, const klj_val *a, int n) {
+    (void)env;
+    const char *u = n > 0 ? klj_obj_str(a[0].l, "android/net/Uri") : NULL;
+    char brief[320];
+    KLJ_LOG("Intent.setData(%s)", u ? klj_uri_brief(u, brief, sizeof brief) : "(null)");
+    klj_intent_note(self, u ? u : "", NULL);
+    return (klj_val){.l = self};
+}
+// Uri.parse: an android/net/Uri carrying its string, which is all anything
+// here reads back (Intent.setData notes it).
+static klj_val klj_Uri_parse(void *env, void *clazz, const klj_val *a, int n) {
+    (void)env; (void)clazz;
+    const char *s = n > 0 ? klj_str(a[0].l) : NULL;
+    void *obj = kl_jni_new_object("android/net/Uri");
+    if (!obj) return (klj_val){.l = NULL};
+    klj_as_object(obj)->data = s ? strdup(s) : NULL;
+    klj_own(obj, free);
+    return (klj_val){.l = obj};
+}
+// There is no Android here to hand an intent to: no other app, no browser.
+// startActivity is answered all the same (an unbound call ends the run) and the
+// intent it was given is logged and refused. (On Android an intent nobody can
+// handle throws ActivityNotFoundException; doing nothing is the gentler of the
+// two for a guest that does not catch it.)
+static klj_val klj_Context_startActivity(void *env, void *self, const klj_val *a, int n) {
+    (void)env; (void)self;
+    void *intent = n > 0 ? a[0].l : NULL;
+    const char *act = klj_obj_str(intent, "android/content/Intent");
+    char uri[1024] = "", pkg[256] = "";
+    pthread_mutex_lock(&g_intent_mu);
+    for (int i = 0; i < KLJ_INTENT_SLOTS; i++)
+        if (intent && g_intent_out[i].obj == intent) {
+            snprintf(uri, sizeof uri, "%s", g_intent_out[i].uri);
+            snprintf(pkg, sizeof pkg, "%s", g_intent_out[i].pkg);
+            g_intent_out[i].obj = NULL;   // started: a recycled object starts clean
+        }
+    pthread_mutex_unlock(&g_intent_mu);
+    char brief[320];
+    KLJ_LOG("startActivity(%s %s, package %s) — refused: no other app to open on this host",
+            act ? act : "(null)", klj_uri_brief(uri, brief, sizeof brief), pkg[0] ? pkg : "-");
+    return (klj_val){.j = 0};
 }
 static klj_val klj_Intent_addFlags(void *env, void *self, const klj_val *a, int n) {
     (void)env;
@@ -1879,6 +2034,19 @@ const klj_binding klj_bind_android[] = {
 
     {"android/content/Intent", "setPackage",  "(Ljava/lang/String;)Landroid/content/Intent;", klj_Intent_setPackage},
     {"android/content/Intent", "addFlags",    "(I)Landroid/content/Intent;",                 klj_Intent_addFlags},
+    {"android/content/Intent", "<init>",      "()V",                                         klj_Intent_init},
+    {"android/content/Intent", "setAction",   "(Ljava/lang/String;)Landroid/content/Intent;", klj_Intent_setAction},
+    {"android/content/Intent", "setFlags",    "(I)Landroid/content/Intent;",                 klj_Intent_setFlags},
+    {"android/content/ComponentName", "<init>", "(Ljava/lang/String;Ljava/lang/String;)V",   klj_ComponentName_init},
+    {"android/content/Intent", "setComponent", "(Landroid/content/ComponentName;)Landroid/content/Intent;", klj_Intent_setComponent},
+    {"android/content/Intent", "setClassName", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;", klj_Intent_setClassName},
+    {"android/content/Intent", "putExtra", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;", klj_Intent_putExtraString},
+    {"android/content/Intent", "putExtra", "(Ljava/lang/String;I)Landroid/content/Intent;",  klj_Intent_putExtraScalar},
+    {"android/content/Intent", "putExtra", "(Ljava/lang/String;Z)Landroid/content/Intent;",  klj_Intent_putExtraScalar},
+    {"android/content/Intent", "setData",     "(Landroid/net/Uri;)Landroid/content/Intent;",  klj_Intent_setData},
+    {"android/net/Uri",        "parse",       "(Ljava/lang/String;)Landroid/net/Uri;",        klj_Uri_parse},
+    {"android/content/Context", "startActivity", "(Landroid/content/Intent;)V",              klj_Context_startActivity},
+    {"android/app/Activity",    "startActivity", "(Landroid/content/Intent;)V",              klj_Context_startActivity},
     {"android/content/Intent", "toUri",       "(I)Ljava/lang/String;",                       klj_Intent_toUri},
     {"android/content/Context", "getPackageManager", "()Landroid/content/pm/PackageManager;", klj_Context_getPackageManager},
     {"android/content/Context", "getPackageName", "()Ljava/lang/String;", klj_Context_getPackageName},
