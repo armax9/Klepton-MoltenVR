@@ -267,6 +267,55 @@ static void kl_driver_env_defaults(const kl_target *t) {
             setenv("KL_VK_DEVICE_INFO", "auto", 0);
         }
     }
+    else if (!strcmp(t->name, "batman")) {
+        // "Small hitches while playing, the game stands still for a moment"
+        // (2026-10-17). Its log of twelve minutes in the story: the picture
+        // stood for 0.5 to 1.6 s eight times, and each time but two the
+        // render thread was in vkCreateGraphicsPipelines — 400 pipelines,
+        // 15 s in the compiler, the slowest 1.1 s, as new places and enemies
+        // came into view. Metal keeps what it compiled, so a place seen once
+        // is smooth the next time; a story game is mostly places seen once.
+        // The other two were enemies coming in with a dozen sound banks
+        // loaded at once. The sound itself ran without a gap.
+        //
+        // As for Walkabout and Demeo: the stall watch names what each gap
+        // was, the frame statistics say how the frames went, and a session's
+        // pipelines are recorded and compiled before the next start (after a
+        // system update has emptied Metal's cache, too). Compiling behind the
+        // frame (KL_VK_ASYNC_PIPES with KL_VK_ASYNC_RP) is a test switch, on
+        // from the start for this game (targets.py "test_on"): with it the
+        // owner's next session had no such freeze left (2026-10-17).
+        setenv("KL_STALL_MS", "100", 0);
+        setenv("KL_GUEST_FRAME_STATS", "10", 0);
+        if (getenv("KL_VK_FOZ_DIR")) {
+            setenv("KL_VK_FOZ_REPLAY", "auto", 0);
+            setenv("KL_VK_FOZ_REPLAY_BLOCK", "1", 0);
+            setenv("KL_VK_FOZ_THREADS", "6", 0);
+            setenv("KL_VK_FOZ_RECORD", "auto", 0);
+            setenv("KL_VK_DEVICE_INFO", "auto", 0);
+        }
+    }
+    else if (!strcmp(t->name, "moss")) {
+        // "Some shader stutters, in the Steam and in the Meta version"
+        // (2026-10-17). The first session of a fresh Steam copy compiled 162
+        // pipelines in four minutes, 0.3-0.7 s each, at the draw that first
+        // needed them; the second start compiled none (Metal's cache), so it
+        // is the places not seen yet on this installation. As for Arkham
+        // Shadow: what each gap was, how the frames went, and a session's
+        // pipelines recorded and compiled before the next start. Compiling
+        // behind the frame (KL_VK_ASYNC_PIPES with KL_VK_ASYNC_RP) is a test
+        // switch, on from the start for this game (targets.py "test_on"):
+        // with it the owner's next session had no compile freeze left.
+        setenv("KL_STALL_MS", "100", 0);
+        setenv("KL_GUEST_FRAME_STATS", "10", 0);
+        if (getenv("KL_VK_FOZ_DIR")) {
+            setenv("KL_VK_FOZ_REPLAY", "auto", 0);
+            setenv("KL_VK_FOZ_REPLAY_BLOCK", "1", 0);
+            setenv("KL_VK_FOZ_THREADS", "6", 0);
+            setenv("KL_VK_FOZ_RECORD", "auto", 0);
+            setenv("KL_VK_DEVICE_INFO", "auto", 0);
+        }
+    }
     else if (!strcmp(t->name, "x5269080709783454")) {
         // Max Mustard (Unity 2022.3 + FMOD Studio over OpenSL). FMOD produced
         // sound in only a small fraction of its buffers — heard as near-silence
