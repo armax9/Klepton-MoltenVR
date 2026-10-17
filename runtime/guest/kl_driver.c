@@ -345,6 +345,52 @@ static void kl_driver_env_defaults(const kl_target *t) {
         // through Unity 6.2's own callback (kl_jni_low_memory).
         setenv("KL_LOWMEM_FREE_MB", "1536", 0);
     }
+    else if (!strcmp(t->name, "x8387152738076399")) {
+        // Banners & Bastions 1.0.5 (com.dropout.island; Unity 6000.3, Vulkan,
+        // Unity's OpenXR plugin with Meta's MetaXRFeature, the Interaction SDK
+        // and MR Utility Kit): a mixed-reality tabletop game. First run here
+        // (2026-10-17): it started, but the picture stayed glued to the head,
+        // no controllers showed, the room was black, and it stuttered. The
+        // same stack as DreamSpace (x9449316705178989), and the same answers.
+        //
+        // OVRPlugin's version. Told 1.60.0, MetaXRFeature never reached the
+        // native OnInstanceCreate ("[MetaXRFeature] OnInstanceCreate returned
+        // an error") and the Meta half of the SDK stayed off: its camera rig,
+        // its controllers, its passthrough (kl_ovrp.c, klovrp_version_str). It
+        // is told the version its own libOVRPlugin.so carries.
+        setenv("KL_OVRP_VERSION", "1.201.0", 0);
+        // ...and, as for every title told a plugin version this far above the
+        // 1.60.0 these answers were collected against, an entry point with no
+        // answer says UNSUPPORTED and is named once instead of ending the game
+        // (kl_ovrp.c, KL_OVRP_UNANSWERED). Its first was
+        // ovrp_SetControllerDrivenHandPoses, right after the session began:
+        // hands drawn from controllers are not something this runtime does.
+        setenv("KL_OVRP_UNANSWERED", "unsupported", 0);
+        // The room around the board: passthrough is offered, as to the other
+        // mixed-reality titles (kl_ovrp.c, klovrp_pt_on), and the app keeps the
+        // mixed space for it (KleptonTuning.swift, targetIsMixedReality).
+        setenv("KL_OVRP_PASSTHROUGH", "1", 0);
+        // Meta's MR Utility Kit (libmrutilitykitshared) carries TLSDESC
+        // relocations; refused, a NullReferenceException followed at start
+        // (kl_image.c). Loaded, it asks for a room, which is the emulated one
+        // DreamSpace gets (KL_OVRP_SCENE_ROOM, kl_ovrp.c and kl_openxr.c), and
+        // LOCAL_FLOOR is answered as for DreamSpace (kl_openxr.c), which on
+        // this stack asks for it once the Meta half is up.
+        setenv("KL_ELF_TLSDESC", "1", 0);
+        setenv("KL_OVRP_SCENE_ROOM", "1", 0);
+        setenv("KL_XR_LOCAL_FLOOR", "1", 0);
+        // The stutter: 145 pipelines compiled at the draw that first needed
+        // each, about 300 ms apiece, in a 20-second first session. Recorded,
+        // and compiled while the start window is up from the next start on,
+        // as for Demeo above. Only where the app has named the folder.
+        if (getenv("KL_VK_FOZ_DIR")) {
+            setenv("KL_VK_FOZ_REPLAY", "auto", 0);
+            setenv("KL_VK_FOZ_REPLAY_BLOCK", "1", 0);
+            setenv("KL_VK_FOZ_THREADS", "6", 0);
+            setenv("KL_VK_FOZ_RECORD", "auto", 0);
+            setenv("KL_VK_DEVICE_INFO", "auto", 0);
+        }
+    }
 }
 
 void kl_driver_init(const kl_target *t, const char *libdir, kl_slink_door door) {
@@ -369,6 +415,15 @@ void kl_driver_init(const kl_target *t, const char *libdir, kl_slink_door door) 
         // Unity takes the paths this backend has.
         kl_egl_set_gles_version(3, 0);
         fprintf(stderr, "  [gl] DreamSpace: GLES 3.0 capability profile (ANGLE backend)\n");
+    }
+    if (t && !strcmp(t->name, "x3882524545155280")) {
+        // Catan VR (Unity 2018.4, which has no disable-gpu-skinning boot
+        // switch): told 3.2, it skinned the player's hands with a compute
+        // shader, glCreateShader(COMPUTE) was refused (shader 0, "GLSL
+        // compilation failed, no infolog provided" x12) and only the wrist
+        // cuffs were drawn (2026-10-17).
+        kl_egl_set_gles_version(3, 0);
+        fprintf(stderr, "  [gl] Catan VR: GLES 3.0 capability profile (ANGLE backend)\n");
     }
 
 }

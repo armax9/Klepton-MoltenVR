@@ -124,14 +124,16 @@ void kl_reproject_set_srgb_decode(int on) {
 // sRGB-format test that turns the decode on for Steam Link does not fire, and the
 // composite showed its code values as linear: every scene under a flat white
 // veil, shadows lifted to grey. Confirmed on device with KL_SRGB_DECODE=1, which
-// the env still overrides either way.
+// the env still overrides either way. Catan VR (x3882524545155280, Unity 2018.4,
+// legacy VR, RGBA16F eye texture) is the same case: its menu looked washed out,
+// "brightness is very high" (2026-10-17).
 static int klr_srgb_target_default(void) {
     static int v = -1;
     if (v < 0) {
         extern const char *kl_driver_target_name(void);
         const char *t = kl_driver_target_name();
         if (!t) return 0;                      // not known yet: ask again later
-        v = strcmp(t, "x2544573735586536") == 0;
+        v = strcmp(t, "x2544573735586536") == 0 || strcmp(t, "x3882524545155280") == 0;
     }
     return v;
 }

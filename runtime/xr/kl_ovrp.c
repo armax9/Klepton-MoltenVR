@@ -3522,13 +3522,16 @@ void kl_ovrp_set_head_pose(float px, float py, float pz,
     // the user's feet and then jumped to eye height. For this target the
     // default is taken as stated from the first head pose (fix 15, 2026-10-11).
     // Per target on purpose: the shift is otherwise never made for a guest
-    // that merely has not said.
+    // that merely has not said. Catan VR (x3882524545155280) never says at all,
+    // reads EyeLevel back and recenters: the head came in 1.1 m up and the
+    // player stood far above the table (2026-10-17).
     if (!g_eye_origin_have && !g_eye_origin_want && g_tracking_origin == 0) {
         static int dflt = -1;
         if (dflt < 0) {
             const char *t = kl_driver_target_name();
             dflt = kl_env_on("KL_OVRP_EYELEVEL_DEFAULT",
-                             t && strcmp(t, "x2897337400373711") == 0);
+                             t && (strcmp(t, "x2897337400373711") == 0 ||
+                                   strcmp(t, "x3882524545155280") == 0));
         }
         if (dflt) klovrp_eye_origin_capture(py, "KL_OVRP_EYELEVEL_DEFAULT: the guest starts "
                                                 "EyeLevel, as Unreal does");
@@ -8626,10 +8629,30 @@ static void klovrp_eye_color_apply(const float *scale, const float *offset, cons
                 scale[0], scale[1], scale[2], scale[3], offset[0], offset[1], offset[2], offset[3], from);
     }
 }
+// A plugin from before 1.55 ran on VrApi on a Quest, and VrApi's layers have a
+// colour scale and no offset: the offset a game passed was dropped there. Catan
+// VR (OVRPlugin 1.52) fades in with scale 0 -> 1 and an offset of 1 all along;
+// applied, that is a white picture from the end of the splash on (2026-10-17).
+// Such a game gets its offset dropped here as well. KL_OVRP_COLOR_OFFSET=1 keeps
+// it, =0 drops it for every game.
+static int klovrp_color_offset_wanted(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *v = klovrp_guest_version();
+        int major = 0, minor = 0;
+        int vrapi = v && sscanf(v, "%d.%d", &major, &minor) == 2 && major == 1 && minor < 55;
+        on = kl_env_on("KL_OVRP_COLOR_OFFSET", !vrapi);
+        if (!on)
+            fprintf(stderr, "  [ovrp] colour offset dropped (OVRPlugin %s ran on VrApi on a Quest, "
+                            "which has no offset; KL_OVRP_COLOR_OFFSET=1 keeps it)\n", v ? v : "?");
+    }
+    return on;
+}
 static uint64_t klovrp_SetColorScaleAndOffset(klovrp_vec4 scale, klovrp_vec4 offset, int all_layers) {
     ovrp_hit("ovrp_SetColorScaleAndOffset");
     (void)all_layers;        // the eye picture is what is faded here; panels keep their own colour
     float s[4] = { scale.x, scale.y, scale.z, scale.w }, o[4] = { offset.x, offset.y, offset.z, offset.w };
+    if (!klovrp_color_offset_wanted()) memset(o, 0, sizeof o);
     if (!klovrp_color_sane(s) || !klovrp_color_sane(o)) return OVRP_SUCCESS;
     memcpy(g_color_scale, s, sizeof s); memcpy(g_color_offset, o, sizeof o);
     if (kl_env_on("KL_OVRP_COLOR_SCALE", 1)) klovrp_eye_color_apply(s, o, "ovrp_SetColorScaleAndOffset");
@@ -11298,6 +11321,24 @@ static uint64_t klovrp_GetActiveController2(int *out) {
     return OVRP_SUCCESS;
 }
 
+// The un-suffixed forms, OVRP_1_1_0's: `ovrpController ovrp_GetConnectedControllers(void)`
+// and `ovrpController ovrp_GetActiveController(void)` RETURN the mask instead of
+// writing it through a pointer. Unity's OVRInput reads them every frame once the
+// Meta half of the SDK is up on the OpenXR backend (Banners & Bastions,
+// x8387152738076399, told its own 1.201.0; 2026-10-17). Unanswered they ended
+// the game, and under KL_OVRP_UNANSWERED=unsupported the -1004 came back AS the
+// mask — no Touch, a gamepad and a remote that are not there — and OVRInput
+// read neither the PSVR2 Sense controllers nor the hands. The same answer as
+// the 2-forms above: the pair of Touch controllers this runtime presents.
+static uint64_t klovrp_GetConnectedControllers(void) {
+    ovrp_hit("ovrp_GetConnectedControllers");
+    return (uint64_t)OVRP_CTRL_TOUCH;
+}
+static uint64_t klovrp_GetActiveController(void) {
+    ovrp_hit("ovrp_GetActiveController");
+    return (uint64_t)OVRP_CTRL_TOUCH;
+}
+
 // --- Display cadence ------------------------------------------------------
 // ovrp_GetSystemVSyncCount2(int* x0) and ovrp_GetAppFramerate2(float* x0), both
 // -1001 on NULL. One vsync per frame, and the frame rate is the compositor's
@@ -11476,6 +11517,7 @@ static const struct { const char *name; void *fn; } g_ovrp_impl[] = {
     {"ovrp_GetASWDepthScale", (void *)klovrp_GetASWDepthScale},
     {"ovrp_GetASWVelocityScale", (void *)klovrp_GetASWVelocityScale},
     {"ovrp_GetActiveController2", (void *)klovrp_GetActiveController2},
+    {"ovrp_GetActiveController", (void *)klovrp_GetActiveController},
     {"ovrp_GetAppCPUPriority2", (void *)klovrp_GetAppCPUPriority2},
     {"ovrp_GetAppFramerate2", (void *)klovrp_GetAppFramerate2},
     {"ovrp_GetAppHasSystemOverlayPresent", (void *)klovrp_GetAppHasSystemOverlayPresent},
@@ -11491,6 +11533,7 @@ static const struct { const char *name; void *fn; } g_ovrp_impl[] = {
     {"ovrp_GetBoundaryDimensions2", (void *)klovrp_GetBoundaryDimensions2},
     {"ovrp_GetBoundaryVisible2", (void *)klovrp_GetBoundaryVisible2},
     {"ovrp_GetConnectedControllers2", (void *)klovrp_GetConnectedControllers2},
+    {"ovrp_GetConnectedControllers", (void *)klovrp_GetConnectedControllers},
     {"ovrp_GetCurrentTrackingTransformPose", (void *)klovrp_GetCurrentTrackingTransformPose},
     {"ovrp_GetEnvironmentDepthHandRemovalSupported", (void *)klovrp_GetEnvironmentDepthHandRemovalSupported},
     {"ovrp_GetEnvironmentDepthSupported", (void *)klovrp_GetEnvironmentDepthSupported},

@@ -370,6 +370,45 @@ static const kl_gp_word k_wrath2_forcevk[] = {
     { 0xc319348, 0xa9025ff8, 0xd65f03c0, "ret" },
 };
 
+// The Walking Dead: Saints & Sinners - Chapter 2: Retribution (libUE4.so, UE
+// 4.27.2, version code 32342700, store target x5190288877703616): Niagara is
+// told there is no compute.
+//
+// The level after the tutorial has a Niagara emitter that simulates on the
+// GPU. Its first dispatch asks for a compute shader (a 64-wide kernel with the
+// GroupSharedIndex compaction of Niagara's emitter shader), a stage the ES 3.0
+// context here does not have: glCreateShader(GL_COMPUTE_SHADER) answers 0, the
+// program links with "No compiled shaders.", FOpenGLDynamicRHI::
+// GetLinkedComputeProgram logs its fatal (ForceQuit, ignored) and the render
+// thread faults in BindPendingComputeShaderState — the loading screen stays up
+// for good (on device, twice, 2026-10-17). Unreal never asks whether compute
+// exists: the ES 3.1 shader platform has it by definition. The cvars that would
+// switch it off (fx.NiagaraAllowGPUParticles, fx.NiagaraAllowComputeShaders)
+// cannot be reached in this Shipping build — it has no -ini: or -dpcvars
+// command-line override, and a command line carrying them changed nothing.
+//
+// So the two questions Niagara does ask are answered "no":
+// FNiagaraUtilities::AllowGPUParticles and ::AllowComputeShaders return false.
+// Their callers (FNiagaraEmitterInstance::IsAllowedToExecute, the batcher's
+// PreInitViews/PostInitViews/PreRender/PostRenderOpaque,
+// UNiagaraScript::DidScriptCompilationSucceed, InitEmitters, ...) then leave
+// GPU-simulated emitters out, as they would on a platform without compute.
+// CPU-simulated effects are untouched. The last words of each group are
+// fingerprints only (the reads of the two cvars), which pin it to this build.
+//   0x8347080  adrp x9, ...              -> mov w0, wzr   (AllowGPUParticles)
+//   0x8347084  ldr  x9, [x9, #1136]      -> ret
+//   0x8347184  adrp x9, ...              -> mov w0, wzr   (AllowComputeShaders)
+//   0x8347188  ldr  x9, [x9, #1136]      -> ret
+static const kl_gp_word k_twd2_niagara_no_compute[] = {
+    { 0x8347080, 0xd0031729, 0x2a1f03e0, "AllowGPUParticles: mov w0, wzr" },
+    { 0x8347084, 0xf9423929, 0xd65f03c0, "AllowGPUParticles: ret" },
+    { 0x8347184, 0xd0031729, 0x2a1f03e0, "AllowComputeShaders: mov w0, wzr" },
+    { 0x8347188, 0xf9423929, 0xd65f03c0, "AllowComputeShaders: ret" },
+    { 0x8347130, 0xf9423d08, 0xf9423d08, "fingerprint only (fx.NiagaraAllowGPUParticles read)" },
+    { 0x8347140, 0xf9424108, 0xf9424108, "fingerprint only (fx.NiagaraAllowComputeShaders read)" },
+    { 0x8347234, 0xf9424108, 0xf9424108, "fingerprint only (fx.NiagaraAllowComputeShaders read)" },
+};
+
 // Wrath2 (libUE4.so) — the "COMPILING SHADERS" title segment is left to the game.
 //
 // AAW_CompileShadersTitleScreenSegment gates on
@@ -686,6 +725,10 @@ static const kl_gp_patch k_patches[] = {
     //   "force HL2Q3 Queued Material System allow=1 so VR render targets get created",
     //   k_hl2_matqueue_allow, sizeof k_hl2_matqueue_allow / sizeof *k_hl2_matqueue_allow },
 
+    { "twd2-niagara-no-compute", "libUE4.so",
+      "Niagara's AllowGPUParticles/AllowComputeShaders answer false: no compute stage here",
+      k_twd2_niagara_no_compute,
+      sizeof k_twd2_niagara_no_compute / sizeof *k_twd2_niagara_no_compute },
     { "wrath2-force-vulkan-available", "libUE4.so",
       "FAndroidMisc::IsVulkanAvailable() always returns true (the RHI gate)",
       k_wrath2_forcevk, sizeof k_wrath2_forcevk / sizeof *k_wrath2_forcevk },

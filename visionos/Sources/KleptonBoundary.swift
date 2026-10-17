@@ -250,6 +250,12 @@ final class KLBoundary {
         // How near each point is, 0 (far enough inside) to 1 (on the edge or beyond).
         var near: [SIMD4<Float>] = []
         var most: Float = 0
+        // The whole picture fading out reacts later than the wall: the owner, after
+        // playing with it (2026-10-17), "reagiert zu schnell … erst später anfangen
+        // auszublenden, wenn man näher zur Wand kommt". The head from 20 cm, a hand
+        // only from 10 cm (a swing in Beat Saber should not dim the game), and
+        // easing in: barely anything over the first half of that.
+        var fade: Float = 0
         for (k, p) in points.prefix(3).enumerated() {
             let r = roomFromRaw * SIMD4<Float>(p, 1)
             let d = a.sdf.withUnsafeBufferPointer { s in kl_room_sdf_at(a.room.grid, s.baseAddress, r.x, r.z) }
@@ -261,6 +267,9 @@ final class KLBoundary {
             t = t * t * (3 - 2 * t)
             most = max(most, t)
             near.append(SIMD4<Float>(r.x, r.y, r.z, t))
+            let fadeStart: Float = k == 0 ? 0.20 : 0.10
+            let f = max(0, min(1, (fadeStart - d) / fadeStart))
+            fade = max(fade, f * f)
         }
         while near.count < 3 { near.append(.zero) }
         if most > 0.6 && lastNear <= 0.6 { NSLog("[room] play area: near the edge (%.2f)", most) }
@@ -270,7 +279,8 @@ final class KLBoundary {
 
         if mode == .room && mixedSpace, let fadePipe {
             sayOnce("room", "the game turns see-through near the edge")
-            var u = SIMD4<Float>(0.9 * most, 0, 0, 0)
+            guard fade > 0.002 else { return }
+            var u = SIMD4<Float>(0.9 * fade, 0, 0, 0)
             enc.setRenderPipelineState(fadePipe)
             enc.setFragmentBytes(&u, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)

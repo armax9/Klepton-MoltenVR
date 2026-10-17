@@ -13,6 +13,10 @@ int  kl_glfb_enabled(void);
 // for Beat Saber from 1.45). kl_egl.c answers the ES 3.1 storage limits to match:
 // without them Unity refuses a kernel before it reaches GL.
 int  kl_glfb_compute_tf(void);
+// Whether read-only storage buffers are read through textures (KL_GLFB_SSBO_TEX;
+// on for Garden of the Sea). kl_egl.c answers the ES 3.1 storage limits for it
+// too: the title's shaders read storage buffers in the vertex stage.
+int  kl_glfb_ssbo_tex(void);
 int  kl_glfb_init(void);
 void kl_glfb_set_size(int w, int h);
 

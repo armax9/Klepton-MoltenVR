@@ -589,15 +589,33 @@ answers GL and kl_glfb never initializes.
   and vertex arrays, instead of a fresh one. Unreal does this; the parked
   context is handed to the next thread that asks, which is only right while
   the guest has one context. Default 1 for `x2897337400373711` (The Walking
-  Dead: Saints & Sinners) and `x3484270071659289` (Tales from the Galaxy's
-  Edge), else 0.
+  Dead: Saints & Sinners), `x3484270071659289` (Tales from the Galaxy's
+  Edge) and `x5190288877703616` (The Walking Dead: Saints & Sinners -
+  Chapter 2: Retribution), else 0.
 - `KL_GLFB_COPYIMAGE_EMU=0|1` — emulate `glCopyImageSubData`, which ANGLE on
   Metal has under no name: compressed 2D uploads are kept on the CPU per
   texture and level and a copy re-uploads from there; uncompressed copies go
   through a read framebuffer. Costs memory equal to the compressed textures
-  resident. Default 1 for the same two titles (Unreal's texture streaming
-  needs it), else 0; the call itself always goes through a thunk that reads
-  its stack arguments the way the guest pushed them.
+  resident. Default 1 for the same two titles and the other Unreal titles
+  named in `klfb_cimg_on`, among them `x5190288877703616` (Saints & Sinners -
+  Chapter 2, whose textures were all purple without it) — Unreal's texture
+  streaming needs it — else 0; the call itself always goes through a thunk
+  that reads its stack arguments the way the guest pushed them.
+- `KL_GLFB_TB_MANY=0|1` — keep up to 8192 textures over buffers (and 8192
+  buffers) fresh in the texel-buffer emulation instead of 1024. Past the
+  limit a texel buffer's 2D stand-in keeps its first contents, and what is
+  drawn from it (skinned meshes, particles) goes wrong. Default 1 for
+  `x5190288877703616` (Saints & Sinners - Chapter 2, which passes 1024 while
+  loading), else 0.
+- `KL_GL_TB_ALIGN=<bytes>` — (`runtime/gfx/kl_egl.c`) the answer to
+  `glGetIntegerv(GL_TEXTURE_BUFFER_OFFSET_ALIGNMENT)`, which ANGLE's ES 3.0
+  context does not know. Unanswered, the guest reads 0, and Unreal aligns
+  every texel-buffer window in its pooled read buffer to that — `Align(x, 0)`
+  is 0 — so every allocation in the pool lands at byte 0 and each one
+  overwrites the last. Default 16 for `x5190288877703616` (Saints & Sinners -
+  Chapter 2, whose Niagara effects all read the last effect's particle data:
+  sparks drawn as coloured streaks), else unanswered (0). The texel-buffer
+  emulation takes a window at any byte offset.
 - `KL_GLFB_ES32_ALIAS=0|1` — the ES 3.2 core names of the indexed blend and
   enable calls (`glEnablei`, `glBlendFuncSeparatei`, `glColorMaski`, …) are
   answered with ANGLE's OES/EXT functions; under their core names ANGLE's
@@ -4338,6 +4356,23 @@ same PR is issue #42. Set by `kl_driver_env_defaults` for the title:
   (`visionos/targets.py`, `GENERIC_OBB`), and its own Java class
   `DetectHeadphones` is answered by `runtime/jni/kl_jni_ghosttown.c` (no jack
   here, so no plug event is ever sent).
+
+## Banners & Bastions (`x8387152738076399`)
+
+A mixed-reality tabletop game on Unity 6000.3 (Vulkan) with Unity's OpenXR
+plugin, Meta's MetaXRFeature, the Interaction SDK and MR Utility Kit — the
+stack DreamSpace runs on. Set by `kl_driver_env_defaults` for the title:
+`KL_OVRP_VERSION` (the version its own `libOVRPlugin.so` carries; told 1.60.0
+its MetaXRFeature logged "OnInstanceCreate returned an error" and the Meta
+half of the SDK stayed off: picture glued to the head, no controllers),
+`KL_OVRP_UNANSWERED=unsupported` (as for the other titles told their own
+version; the first it reached was `ovrp_SetControllerDrivenHandPoses`),
+`KL_OVRP_PASSTHROUGH`, `KL_ELF_TLSDESC` (MR Utility Kit),
+`KL_OVRP_SCENE_ROOM`, `KL_XR_LOCAL_FLOOR`, and the pipeline record and replay
+of Demeo (`KL_VK_FOZ_*`) for the stutter of its first-drawn pipelines. The app
+counts it among the mixed-reality games (`KleptonTuning.swift`,
+`targetIsMixedReality`): no full-space frame-rate choice. Each can be switched
+off from the launch environment as documented above.
 
 ## Test switches that are on from the installation (`KLEPTON_TEST_ON`)
 

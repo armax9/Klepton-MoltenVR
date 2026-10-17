@@ -1443,6 +1443,55 @@ struct KLRoomCard: View {
 
 // MARK: - The game's settings
 
+/// The two choices of the play area right in the start window, under Start (the
+/// owner's wish, 2026-10-17: switch it there, simply): room scale, stationary or
+/// off, and at the edge the wall or the game fading out. The same settings as
+/// Settings › Play area, which keeps the rest (no edge at all, the rooms).
+struct RoomQuickSettings: View {
+    @AppStorage(KLRoomGuard.modeKey) private var mode = KLRoomGuard.Mode.wall.rawValue
+    @AppStorage(KLRoomGuard.styleKey) private var style = KLRoomGuard.Style.roomscale.rawValue
+    @AppStorage(KLRoomGuard.enabledKey) private var on = KLRoomGuard.installDefault
+
+    /// One picker for "on, and which kind": off, room scale, stationary.
+    private var kind: Binding<String> {
+        Binding(get: { on ? style : "off" },
+                set: { v in
+                    if v == "off" { on = false } else { on = true; style = v }
+                })
+    }
+
+    var body: some View {
+        // One row of a fixed height on glass: nothing appears or goes away when a
+        // choice changes or Start is pressed (the owner: things that jump look broken),
+        // and readable on any game's picture.
+        HStack(spacing: 14) {
+            Text(klT("Play area", "Spielbereich")).font(.callout.weight(.medium))
+            Picker(klT("Play area", "Spielbereich"), selection: kind) {
+                Text(klT("Room scale", "Raumgröße")).tag(KLRoomGuard.Style.roomscale.rawValue)
+                Text(klT("Stationary", "Stationär")).tag(KLRoomGuard.Style.stationary.rawValue)
+                Text(klT("Off", "Aus")).tag("off")
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 330)
+            Divider().frame(height: 26)
+            Group {
+                Text(klT("At the edge", "Am Rand")).font(.callout.weight(.medium))
+                Picker(klT("At the edge", "Am Rand"), selection: $mode) {
+                    Text(klT("Wall", "Wand")).tag(KLRoomGuard.Mode.wall.rawValue)
+                    Text(klT("Fade out", "Ausblenden")).tag(KLRoomGuard.Mode.room.rawValue)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 230)
+            }
+            .disabled(!on)
+            .opacity(on ? 1 : 0.45)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 12)
+        .glassBackgroundEffect(in: .capsule)
+    }
+}
+
 /// Settings › Play area: what the game shows near the edge, and the rooms.
 struct RoomSettingsView: View {
     let measure: () -> Void
@@ -1476,7 +1525,7 @@ struct RoomSettingsView: View {
                     .font(.callout).foregroundStyle(.secondary)
                 Picker(klT("Near the edge", "Am Rand"), selection: $mode) {
                     Text(klT("Virtual wall", "Virtuelle Wand")).tag(KLRoomGuard.Mode.wall.rawValue)
-                    Text(klT("Show the room", "Raum einblenden")).tag(KLRoomGuard.Mode.room.rawValue)
+                    Text(klT("Fade out", "Ausblenden")).tag(KLRoomGuard.Mode.room.rawValue)
                     Text(klT("Off", "Aus")).tag(KLRoomGuard.Mode.off.rawValue)
                 }
                 .pickerStyle(.segmented)

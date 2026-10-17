@@ -626,8 +626,14 @@ static void klgl_FramebufferTextureMultisampleMultiviewOVR(uint32_t target, uint
 static const char *klgl_identity(int renderer) {
     const char *t = kl_driver_target_name();
     // Saints & Sinners (x2897337400373711, UE 4.26) likewise: as "Klepton GLES"
-    // its weapons did not draw at all; as the Quest 2's GPU they do.
-    if (t && (strcmp(t, "moss") == 0 || strcmp(t, "x2897337400373711") == 0))
+    // its weapons did not draw at all; as the Quest 2's GPU they do. Its
+    // sequel, Chapter 2: Retribution (x5190288877703616, UE 4.27.2, the same
+    // studio's engine line), ran as "Klepton GLES" with every texture at a
+    // visibly low resolution and is given the same identity; with it the
+    // textures looked only a little sharper, but the build confirmed working
+    // on device runs with it (2026-10-17).
+    if (t && (strcmp(t, "moss") == 0 || strcmp(t, "x2897337400373711") == 0 ||
+              strcmp(t, "x5190288877703616") == 0))
         return renderer ? "Adreno (TM) 650" : "Qualcomm";
     // Vampire: The Masquerade - Justice asks the same string which headset it
     // is on: UJukeboxBlueprintLibrary::ResolveHMD sets Quest 1, 2 or 3 from
@@ -814,7 +820,9 @@ int kl_gl_cap_integerv(uint32_t pname, int32_t *params) {
         // ...and for a target whose compute kernels kl_glfb runs as transform
         // feedback (Beat Saber 1.45's FillMeshData): refused on the zeros, the
         // kernel never reaches the GL layer that would serve it.
-        if (es31_any || kl_glfb_compute_tf() || (t && (strcmp(t, "x2544573735586536") == 0
+        // ...and for one whose read-only storage buffers kl_glfb reads through
+        // textures (Garden of the Sea).
+        if (es31_any || kl_glfb_compute_tf() || kl_glfb_ssbo_tex() || (t && (strcmp(t, "x2544573735586536") == 0
                                                        || strcmp(t, "x2436558143118760") == 0))) {
             static const struct { uint32_t pname; int32_t value; } es31[] = {
                 {0x8F38 /* MAX_IMAGE_UNITS                     */, 4},
@@ -841,6 +849,25 @@ int kl_gl_cap_integerv(uint32_t pname, int32_t *params) {
                         pname, params[0]);
             return 1;
         }
+    // GL_TEXTURE_BUFFER_OFFSET_ALIGNMENT (ES 3.2 / EXT_texture_buffer, which the
+    // texel-buffer emulation in kl_glfb stands in for). ANGLE's ES 3.0 context
+    // does not know the name, so it went unanswered and the guest read 0. The
+    // Walking Dead: Saints & Sinners - Chapter 2: Retribution (x5190288877703616)
+    // aligns each allocation in its pooled read buffer to it, and Align(x, 0) is
+    // 0: every Niagara effect's particle data was written to byte 0 of the one
+    // buffer, each over the last, and every texel-buffer window was opened at
+    // byte 0 too. Each effect then drew from whichever effect had been written
+    // last — its sparks as streaks of the wrong colours, flickering as the set
+    // of effects in view changed (seen on device and traced event by event,
+    // 2026-10-17). 16 covers the widest texel (RGBA32F); the emulation reads a
+    // window at any byte offset. Per target, as the limits above are;
+    // KL_GL_TB_ALIGN=<n> answers n for any target, 0 leaves it unanswered.
+    if (pname == 0x919F) {
+        const char *t = kl_driver_target_name();
+        int a = kl_env_int("KL_GL_TB_ALIGN", t && strcmp(t, "x5190288877703616") == 0 ? 16 : 0);
+        if (a > 0) { params[0] = a; return 1; }
+        return 0;
+    }
     if (pname == 0x0D3A) {                       // MAX_VIEWPORT_DIMS: two values
         params[0] = 16384; params[1] = 16384; return 1;
     }

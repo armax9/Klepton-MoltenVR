@@ -2,7 +2,8 @@
 // The store titles that were brought up before the profile for untested
 // games existed (kl_untested_profile, runtime/guest/kl_driver.c): every x<app id>
 // named anywhere in the runtime, the app or the docs on 2026-10-17 (VRChat from
-// Steam, x438100, added when the profile met release-538), and every
+// Steam, x438100, added when the profile met release-538; community fixes
+// 53-55, made and tested before the profile, added when they were merged), and every
 // title in the AVP Play catalogue's seed (verified, Community Verified,
 // incompatible). They keep exactly the defaults they were tested with; the
 // profile is for a store title nobody here has looked at.
@@ -41,9 +42,11 @@ static const char *const kl_tuned_targets[] = {
     "x3484270071659289",
     "x3634830803298285",
     "x3635172946605196",
+    "x3684804704932159",
     "x4015163475201433",
     "x4360608937312293",
     "x438100",
+    "x5190288877703616",
     "x5245041552210029",
     "x5269080709783454",
     "x5340130476095884",
@@ -59,6 +62,7 @@ static const char *const kl_tuned_targets[] = {
     "x7527722310622065",
     "x7532973430077887",
     "x8116626111777808",
+    "x8387152738076399",
     "x9386827918099701",
     "x9449316705178989",
     "x9531494193591052",

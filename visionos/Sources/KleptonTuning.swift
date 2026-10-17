@@ -312,7 +312,10 @@ final class KleptonRendering: ObservableObject {
     private static let rateKey = "klepton.maxRate"
     static let targetIsMixedReality: Bool = {
         let t = String(cString: kl_app_target_name_or_default())
+        // ...and Banners & Bastions (x8387152738076399), whose board stands
+        // in the room (kl_driver.c sets its passthrough).
         return t == "x5340130476095884" || t == "x3634830803298285" || t == "x2436558143118760"
+            || t == "x8387152738076399"
             || klEnvOn("KL_OVRP_PASSTHROUGH", default: false)
     }()
     @Published var maxRate: Int {

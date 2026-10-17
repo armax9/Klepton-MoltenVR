@@ -788,6 +788,15 @@ struct BootView: View {
     @ObservedObject private var roomFlow = KLRoomFlow.shared
     @State private var roomMissing = false
     @State private var roomFailed = ""
+    /// Watched so that "Measure room" follows the choice under Start (RoomQuickSettings).
+    @AppStorage(KLRoomGuard.enabledKey) private var roomOn = KLRoomGuard.installDefault
+    @AppStorage(KLRoomGuard.styleKey) private var roomStyle = KLRoomGuard.Style.roomscale.rawValue
+    /// "Measure room" is for room scale only. Reads the two settings above, so the
+    /// button follows the choice at once (KL_ROOM_GUARD/KL_ROOM_STYLE still win).
+    private var canMeasureRoom: Bool {
+        _ = roomOn; _ = roomStyle
+        return KLRoomGuard.enabled && KLRoomGuard.style == .roomscale
+    }
     /// Whether this build fronts as a game (a picture, its name, Start and
     /// Settings) rather than as the boot report. Asked for by whoever built it
     /// (gen_xcodeproj.py, KLEPTON_START_SCREEN) and not by the target: the same
@@ -1071,17 +1080,22 @@ struct BootView: View {
                     .controlSize(.extraLarge)
                     .disabled(roomFlow.active)
                     // Beside Settings, as a Quest asks for its boundary before a game.
-                    if KLRoomGuard.enabled, !started {
-                        Button {
-                            openRoom(.setup)
-                        } label: {
-                            Label(klT("Measure room", "Raum vermessen"), systemImage: "square.dashed")
-                        }
-                        .controlSize(.extraLarge)
-                        .disabled(roomFlow.active)
+                    // Always there, so the row keeps its shape: greyed out while the
+                    // game starts or runs, and when the play area is off or stationary
+                    // (the owner, 2026-10-17: hidden on Start it looked broken).
+                    Button {
+                        openRoom(.setup)
+                    } label: {
+                        Label(klT("Measure room", "Raum vermessen"), systemImage: "square.dashed")
                     }
+                    .controlSize(.extraLarge)
+                    .disabled(!canMeasureRoom || started || roomFlow.active)
                     if running { ProgressView() }
                 }
+                // Room scale / stationary / off, and wall / fade out, without going into Settings.
+                // Stays in place once Start is pressed, greyed out, so nothing jumps.
+                RoomQuickSettings()
+                    .disabled(running || finished || run.started || roomFlow.active)
                 if roomFlow.active && roomFlow.quiet {
                     // The check before the start, finding the room: shown only here (KLRoomFlow.quiet).
                     VStack(spacing: 10) {
