@@ -413,6 +413,16 @@ build/t_ovrplayers: tests/t_ovrplayers.c $(RUNTIME) $(RUNTIME_HDRS)
 ovrplayers: build/t_ovrplayers
 	./build/t_ovrplayers
 
+# The profile for untested games (kl_untested_profile): which titles, the
+# OVRPlugin version read from a game's own library, and unknown Java methods
+# answered with zero. Milliseconds; in `make check`.
+build/t_untested: tests/t_untested.c $(RUNTIME) $(RUNTIME_HDRS)
+	@mkdir -p build
+	$(CC) $(CFLAGS) -o $@ tests/t_untested.c $(RUNTIME) $(LDLIBS)
+
+untested: build/t_untested
+	./build/t_untested
+
 # The audio sink's gates (rebelancap's tests/t_audio.c and tests/t_aaudio.c,
 # taken over with his sink). The first: a guest's sample format, per encoding,
 # and the OpenSL surface driven with PCM and PCM_EX sources — a float32 guest
@@ -1021,6 +1031,17 @@ build/t_maxeye_swift: tests/t_maxeye.swift visionos/Sources/KleptonEyeMax.swift
 .PHONY: maxeyeswift
 maxeyeswift: build/t_maxeye_swift
 	./build/t_maxeye_swift
+# Walkabout's "unlock all putters and balls" (KleptonWalkaboutSave.swift) on a
+# COPY of a real save: android-files/files of the game and its
+# global-metadata.dat. Not in `make check` — it needs a player's save.
+#   make walkaboutunlock WB_FILES=<copy>/files WB_META=<tree>/assets/bin/Data/Managed/Metadata/global-metadata.dat
+build/t_walkabout_unlock: tests/t_walkabout_unlock.swift visionos/Sources/KleptonWalkaboutSave.swift
+	@mkdir -p build
+	swiftc -O -parse-as-library -o $@ visionos/Sources/KleptonWalkaboutSave.swift tests/t_walkabout_unlock.swift
+
+.PHONY: walkaboutunlock
+walkaboutunlock: build/t_walkabout_unlock
+	./build/t_walkabout_unlock "$(WB_FILES)" "$(WB_META)"
 
 # Which builds are test builds (KleptonTestBuild.swift; KLTestBuild, which
 # gen_xcodeproj.py bakes): what only a tester sees must never reach a
@@ -1066,7 +1087,7 @@ tgkill: build/t_tgkill
 # Each test writes to a log and is checked BEFORE the log is filtered. Piping a
 # test straight into tail/grep would hand make the filter's exit status instead
 # of the test's, so a failing test would leave the sweep green.
-check: build/t_opus build/t_variadic build/t_load build/t_il2cpp build/m_boot build/t_haptics build/t_hevc build/t_xrspace build/t_ovrplat build/t_posebound build/t_ovrplayers build/t_audio build/t_audiorace build/t_xrinput build/t_softinput build/t_ctr build/t_mtxtable build/t_bcast build/t_neterrno build/t_fault build/t_glcaps build/t_x18race build/t_tgkill build/klepton-ld build/t_uevk build/t_jniobj build/t_fove build/t_mtlbusy build/t_metrics build/t_dl_ext build/t_jni_io build/t_jni_url build/t_jni_firebase build/t_jni_vivox build/t_jni_memory build/t_jni_azs2 build/t_gunclub build/t_maxeye build/t_assetcfg build/t_pinch build/t_arrayviews build/t_surreal build/t_mfxpreset build/t_mfxalpha build/t_statscard build/t_maxeye_swift build/t_x18pool build/t_ue421 build/t_room
+check: build/t_opus build/t_variadic build/t_load build/t_il2cpp build/m_boot build/t_haptics build/t_hevc build/t_xrspace build/t_ovrplat build/t_posebound build/t_ovrplayers build/t_untested build/t_audio build/t_audiorace build/t_xrinput build/t_softinput build/t_ctr build/t_mtxtable build/t_bcast build/t_neterrno build/t_fault build/t_glcaps build/t_x18race build/t_tgkill build/klepton-ld build/t_uevk build/t_jniobj build/t_fove build/t_mtlbusy build/t_metrics build/t_dl_ext build/t_jni_io build/t_jni_url build/t_jni_firebase build/t_jni_vivox build/t_jni_memory build/t_jni_azs2 build/t_gunclub build/t_maxeye build/t_assetcfg build/t_pinch build/t_arrayviews build/t_surreal build/t_mfxpreset build/t_mfxalpha build/t_statscard build/t_maxeye_swift build/t_x18pool build/t_ue421 build/t_room
 	@# The guest steps read $(TARGET)'s own files. Without them the loader steps print nothing and pass, and the
 	@# run ends at the il2cpp step with a bare "Error 1" - a check that looked green until its last line. A
 	@# working copy without the game's tree (a fresh git worktree) is told so here, before anything runs.
@@ -1095,6 +1116,8 @@ check: build/t_opus build/t_variadic build/t_load build/t_il2cpp build/m_boot bu
 	@head -1 build/posebound.log && grep -E '^(PASS|FAIL)' build/posebound.log
 	@./build/t_ovrplayers > build/ovrplayers.log 2>&1 || { cat build/ovrplayers.log; exit 1; }
 	@cat build/ovrplayers.log
+	@./build/t_untested > build/untested.log 2>&1 || { cat build/untested.log; exit 1; }
+	@head -1 build/untested.log && tail -1 build/untested.log
 	@./build/t_audio > build/audio.log 2>&1 || { cat build/audio.log; exit 1; }
 	@echo "=== audio sink: sample formats, OpenSL sources ===" && tail -1 build/audio.log
 	@./build/t_audiorace > build/audiorace.log 2>&1 || { cat build/audiorace.log; exit 1; }

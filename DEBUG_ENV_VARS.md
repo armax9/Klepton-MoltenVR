@@ -70,8 +70,8 @@ C `getenv` checks) turns the knob on, the default is off, and the reader is the
   OFFLINE user for `ovr_GetLoggedInUserID` / `ovr_User_GetLoggedInUser`.
   "Who is playing", not an ownership answer. Default on for the titles listed
   in `klplat_user_listed` — the ones that quit or wait without a user,
-  BattleGroupVR2 (`x9386827918099701`) among them, whose start waits for
-  player data — and off for every other.
+  BattleGroupVR2 (`x9386827918099701`), whose start waits for player data,
+  and Cubism (`x2264524423619421`) among them — and off for every other.
 - `KL_PLAT_IAP_EMPTY=0|1` — (`runtime/xr/kl_ovrplat.c`) answer
   `ovr_IAP_GetProductsBySKU` and `ovr_IAP_GetViewerPurchases` with an EMPTY
   list instead of refusing the request. For a title whose start waits for the
@@ -129,8 +129,9 @@ C `getenv` checks) turns the knob on, the default is off, and the reader is the
   no longer forced opaque — its alpha says where the room shows — and the black
   of `KL_MIXED_BLACK` is left out. Default 1 for TRIANGLE STRATEGY
   (`x5340130476095884`), Demeo (`x3634830803298285`), Richie's Plank Experience
-  (`x1642239225880682`), Synth Riders (`x2436558143118760`) and LES MILLS BODYCOMBAT
-  (`x4015163475201433`) and DreamSpace (`x9449316705178989`), 0 for everyone else,
+  (`x1642239225880682`), Synth Riders (`x2436558143118760`), LES MILLS BODYCOMBAT
+  (`x4015163475201433`), DreamSpace (`x9449316705178989`) and Cubism
+  (`x2264524423619421`), 0 for everyone else,
   who are told "unsupported" as before. A layer filed through
   `ovrp_EnqueueSubmitLayer2` (Unity) counts like one in `ovrp_EndFrame4`'s
   list; for a guest on Meta's OpenXR backend (frames end in `xrEndFrame`,
@@ -868,7 +869,9 @@ The guest's own memory management, and the three seams that used to disable it.
   `x2285803881494677` (Gun Club VR: black gun materials and repeated
   invalid texture-unit errors, surface detail with the pins, as its fix was
   sent in) and `x9863010250399155` (Surviving Mars: Pioneer, Unity
-  2022.3.62f1: samplers at 99..104, its button text unreadable), else 0.
+  2022.3.62f1: samplers at 99..104, its button text unreadable) and
+  `x438100` (VRChat from Steam, Unity 6000.0.67f1: menu text as wrong
+  shapes), else 0.
 - `KL_GLFB_TEX_MS_ANGLE=0|1` — (`runtime/gfx/kl_glfb.c`) serve the guest's
   `glTexStorage2DMultisample` (ES 3.1) through ANGLE's
   `glTexStorage2DMultisampleANGLE`, which an ES 3.0 context accepts. Without
@@ -4272,6 +4275,42 @@ PER GUEST FRAME`.
   `runtime/diag/kl_metrics.c`, `visionos/Sources/KleptonMetrics.swift`
   (drawing only — runs on a Mac with made-up samples), `encodeStatsCard`.
   Tests: `build/t_metrics`, `build/t_mtlbusy`.
+
+## The profile for untested games (`KL_UNTESTED`)
+
+A store title (`x<app id>`) that is not in `runtime/guest/kl_tuned.h` gets
+better defaults (`kl_untested_profile`, `runtime/guest/kl_driver.c`). The list
+holds every title brought up before the profile existed (2026-10-17): every
+x-id named in the runtime, the app or these docs, and every title in the AVP
+Play catalogue's seed. Those keep exactly what they were tested with. A title
+added later stays under the profile unless it is added to the list.
+`KL_UNTESTED=0` turns the profile off; `=1` turns it on for any target. Each
+switch below still wins over it. The run says so once:
+`[klepton] <target>: no title here has been tested — the profile for untested
+games is on`. Host test: `make untested`.
+
+Under the profile:
+- `KL_OVRP_UNANSWERED=unsupported`: an OVRPlugin entry point with no answer here
+  says UNSUPPORTED instead of ending the run.
+- `KL_JNI_SOFT_UNKNOWN=1` (`runtime/kl_jni.c`): a Java method or field with no
+  answer here answers zero (nothing for void, 0 / false, a null object), each
+  named in the log with `...answered with zero`. Only these two lookups;
+  `KL_PERMISSIVE` (which also zeroes EGL and GL) is not involved.
+- `KL_OVRP_GUEST_VERSION=<1.x.y>`: the OVRPlugin version the game ships, told
+  to the game instead of 1.60.0. Read from the game's own `libOVRPlugin.so`
+  when the app is built (`visionos/targets.py` `ovrp_guest_version`,
+  `KLOvrpGuestVersion` in Info.plist), or from the library itself on a Mac host
+  run. The rule: the one NUL-delimited `1.<minor>.<patch>` with a minor of 20
+  or more. No such string, or more than one, leaves 1.60.0.
+- `KL_PLAT_USER=1` with an id of this installation's own, and
+  `KL_PLAT_IAP_EMPTY=1`: an offline player and an empty purchase list. Only the
+  player's identity; ownership is still checked.
+- `KL_ELF_TLSDESC=1`: TLSDESC relocations are served.
+- For a Unity guest: `KL_GLFB_BIND_PINS=1` (on GLES; the pins are skipped for a
+  number two uniforms of a program would share, and a full pin table is said)
+  and `disable-gpu-skinning=1` in boot.config (`KL_UNITY_BOOT_EXTRA`). The boot
+  config is read before Unity picks its graphics API, so a Vulkan title skins
+  on the CPU too.
 
 ## Ghost Town (`x9531494193591052`, community PR #41)
 

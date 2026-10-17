@@ -123,6 +123,10 @@ enum {
 };
 int kl_ovrp_pose_boundary_selftest(FILE *f, int which);
 
+// The OVRPlugin version a game's own libOVRPlugin.so names (the profile for
+// untested games; kl_ovrp.c). 1 and the version in `out`, or 0.
+int kl_ovrp_guest_version_in(const char *path, char *out, size_t cap);
+
 // The host recentered (KleptonCompositor, after it has rebased the head and the
 // controllers): GetLocalTrackingSpaceRecenterCount moves on, for the titles
 // that read it (klovrp_recenter_count_on).

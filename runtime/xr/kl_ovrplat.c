@@ -2096,7 +2096,8 @@ static int klplat_iap_empty(void) {
         on = kl_env_on("KL_PLAT_IAP_EMPTY", t &&
                        (strcmp(t, "x3484270071659289") == 0 ||
                         strcmp(t, "x7532973430077887") == 0 ||
-                        strcmp(t, "beatsaber140") == 0));
+                        strcmp(t, "beatsaber140") == 0) ||
+                       kl_untested_profile());   // ...and untested titles (kl_driver.c)
     }
     return on;
 }
@@ -2437,7 +2438,13 @@ static int klplat_user_listed(const char *t) {
                                 // remain behind a permanent loading spinner.
                                 // The offline user supplies only player identity;
                                 // ownership and purchases remain separate.
-                                "x7532973430077887" };
+                                "x7532973430077887",
+                                // Cubism 1.8.0: entitlement succeeds, then
+                                // GetLoggedInUser returns 0 with "Request
+                                // failed." while the picture stays black
+                                // (owner's device log). Supply offline identity
+                                // through the existing path; no purchase proof.
+                                "x2264524423619421" };
     // Beat Saber from 1.45 on (Unity 6; kl_guest_beatsaber_openxr): its start
     // asks for the user FIRST and goes no further without one — no entitlement
     // request, no scene, one draw a frame of black and silence (on device,
@@ -2450,13 +2457,15 @@ static int klplat_user_listed(const char *t) {
 static int klplat_user_default(void) {
     extern int kl_guest_beatsaber_openxr(void);
     if (kl_guest_beatsaber_openxr()) return 1;
-    return klplat_user_listed(kl_driver_target_name());
+    // ...and every title under the profile for untested games: nine of the
+    // first 52 fixes users sent in were a start that waits for a user forever.
+    return klplat_user_listed(kl_driver_target_name()) || kl_untested_profile();
 }
 // For the start window, which is shown before the driver has a target: is this
 // a game that is handed the offline user (and so one a player name means
 // something to)?
 int kl_ovrplat_offline_user_for(const char *target) {
-    return kl_env_on("KL_PLAT_USER", klplat_user_listed(target));
+    return kl_env_on("KL_PLAT_USER", klplat_user_listed(target) || kl_untested_target(target));
 }
 
 // The offline user's name and id.
@@ -2525,9 +2534,12 @@ static uint64_t klplat_user_id(void) { pthread_once(&g_user_once, klplat_user_in
 // and one account shared by every player is the worse of the two mistakes.
 // There are no saves filed under the fixed id to lose, apart from the two
 // senders' own.
+// ...and every title under the profile for untested games, for the same
+// reason: nobody here knows whether it keys an account on the id.
 int kl_ovrplat_user_id_per_install(const char *target) {
     return target && (strcmp(target, "x3634830803298285") == 0 || strcmp(target, "walkabout") == 0 ||
-                      strcmp(target, "x2582932495064035") == 0 || strcmp(target, "x9386827918099701") == 0);
+                      strcmp(target, "x2582932495064035") == 0 || strcmp(target, "x9386827918099701") == 0 ||
+                      kl_untested_target(target));
 }
 static uint64_t klplat_User_GetLoggedInUser(void) {
     plat_hit("ovr_User_GetLoggedInUser");

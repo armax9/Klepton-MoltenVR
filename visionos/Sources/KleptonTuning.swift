@@ -626,6 +626,19 @@ final class KleptonMetalFX: ObservableObject {
     }
 }
 
+/// What the build read from the game's own files (gen_xcodeproj.py): the
+/// OVRPlugin version its libOVRPlugin.so names (KLOvrpGuestVersion), for the
+/// profile for untested games, which tells the game that version rather than
+/// 1.60.0 (klovrp_version_str). The runtime has no copy of that library on the
+/// device; the bundle carries its translation, not the ELF.
+enum KleptonGuestInfo {
+    static func applyEnvironment() {
+        guard let v = Bundle.main.object(forInfoDictionaryKey: "KLOvrpGuestVersion") as? String,
+              !v.isEmpty else { return }
+        setenv("KL_OVRP_GUEST_VERSION", v, 0)
+    }
+}
+
 /// "Record what the game waits for": the runtime's account of blocked threads
 /// (KL_TRACE_CONDDUMP — kl_pthread_stuck_diag has what it writes), as a switch
 /// a player can turn on for a game that stops in a loading screen. Off unless
@@ -1263,6 +1276,89 @@ struct PlayerNameView: View {
                          + "Gilt ab dem nächsten Start der App."))
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+// Walkabout Mini Golf only: every lost ball and Foxhunt putter of the courses
+// the player has, written into the game's save (KleptonWalkaboutSave.swift).
+// Greyed out until the game has made a save of its own, i.e. after its first
+// start; asks once more before it writes, because the game cannot take it back.
+struct WalkaboutUnlockView: View {
+    static var offered: Bool { klTargetName() == "walkabout" }
+    @State private var asking = false
+    @State private var working = false
+    @State private var status = ""
+    @State private var hasSave = false
+
+    private static var docs: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+    private static var filesDir: URL { docs.appendingPathComponent("android-files/files") }
+    /// The game's global-metadata.dat in the staged asset tree: where the runtime
+    /// was told it is, else where the game data screen puts it, else the tree
+    /// named after the target (KLGameFiles.current is nil for a build that
+    /// carries no data description, as the store installs do).
+    private static var metadata: URL {
+        let rel = "bin/Data/Managed/Metadata/global-metadata.dat"
+        var roots: [URL] = []
+        if let c = kl_app_assets_dir() { roots.append(URL(fileURLWithPath: String(cString: c))) }
+        if let a = KLGameFiles.current?.assetsURL { roots.append(a) }
+        roots.append(docs.appendingPathComponent("\(klTargetName())/assets"))
+        let fm = FileManager.default
+        return roots.map { $0.appendingPathComponent(rel) }.first { fm.fileExists(atPath: $0.path) }
+            ?? roots[roots.count - 1].appendingPathComponent(rel)
+    }
+
+    var body: some View {
+        if Self.offered {
+            GroupBox(klT("Progress", "Spielfortschritt")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button(klT("Unlock all putters and balls", "Alle Putter und Bälle freischalten")) { asking = true }
+                        .disabled(!hasSave || working)
+                    Text(hasSave
+                         ? klT("Puts every lost ball and every Foxhunt putter of the courses you own into your save, as if you had found them. Courses sold separately count only if you bought them; Putter Pass putters stay as they are.",
+                               "Trägt alle verlorenen Bälle und alle Foxhunt-Putter der Kurse, die du besitzt, in deinen Spielstand ein, als hättest du sie gefunden. Einzeln verkaufte Kurse zählen nur, wenn du sie gekauft hast; Putter-Pass-Putter bleiben, wie sie sind.")
+                         : klT("Possible only after the game has been started once: it needs the game's own save.",
+                               "Geht erst, nachdem das Spiel einmal gestartet wurde: Dafür braucht es den Spielstand des Spiels."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !status.isEmpty { Text(status).font(.footnote) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onAppear { hasSave = KLWalkaboutUnlock.hasSave(filesDir: Self.filesDir) }
+            .alert(klT("Unlock all putters and balls?", "Alle Putter und Bälle freischalten?"), isPresented: $asking) {
+                Button(klT("Unlock", "Freischalten"), role: .destructive) { unlock() }
+                Button(klT("Cancel", "Abbrechen"), role: .cancel) {}
+            } message: {
+                Text(klT("Every lost ball and every Foxhunt putter of your courses is written into your save. This cannot be undone.",
+                         "Alle verlorenen Bälle und alle Foxhunt-Putter deiner Kurse werden in deinen Spielstand geschrieben. Das kann nicht rückgängig gemacht werden."))
+            }
+        }
+    }
+
+    private func unlock() {
+        let meta = Self.metadata
+        working = true
+        status = klT("Unlocking…", "Wird freigeschaltet …")
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        // A copy of each file before it changes, outside the game's own folders.
+        let backup = Self.docs.appendingPathComponent("klepton-walkabout-unlock/\(stamp)")
+        let files = Self.filesDir
+        Task.detached {
+            let text: String
+            do {
+                let r = try KLWalkaboutUnlock.unlockAll(filesDir: files, metadata: meta, backup: backup)
+                NSLog("[walkabout] unlock: \(r.profiles) profile(s), +\(r.balls) balls, +\(r.putters) putters, \(r.courses) course(s)")
+                text = r.profiles == 0
+                    ? klT("Everything was unlocked already.", "Es war schon alles freigeschaltet.")
+                    : klT("Unlocked: \(r.balls) balls and \(r.putters) putters. They are there the next time the game starts.",
+                          "Freigeschaltet: \(r.balls) Bälle und \(r.putters) Putter. Sie sind beim nächsten Start des Spiels da.")
+            } catch {
+                NSLog("[walkabout] unlock failed: \(error)")
+                text = klT("Could not unlock: \(error)", "Freischalten ging nicht: \(error)")
+            }
+            await MainActor.run { status = text; working = false }
         }
     }
 }

@@ -43,6 +43,24 @@
 static int g_permissive = 0;
 void kl_jni_set_permissive(int on) { g_permissive = on; }
 
+// KL_JNI_SOFT_UNKNOWN: a Java method or field with no answer here answers zero
+// (no-op for void, 0 / false, a null object) and is named in the log, instead
+// of ending the run. Only the method and field lookups: unlike KL_PERMISSIVE it
+// leaves EGL and GL alone, where a zero is a wrong answer rather than an absent
+// feature. Most of these calls are SDKs the game can live without (analytics,
+// crash reporting, voice chat, a vendor's own helper class) — about twenty of
+// the first 52 fixes users sent in were exactly that. Default on under the
+// profile for untested games (kl_untested_profile), off for every other title:
+// for a title being brought up, the stop by name is the work item.
+static int klj_soft_unknown(void) {
+    static int v = -1;
+    if (v < 0) {
+        extern int kl_untested_profile(void);
+        v = kl_env_on("KL_JNI_SOFT_UNKNOWN", kl_untested_profile());
+    }
+    return v;
+}
+
 // Table construction is deferred to first use; the host may build objects before
 // it ever touches the VM handle, so the public constructors force it too.
 static pthread_once_t g_init_once = PTHREAD_ONCE_INIT;
@@ -1778,6 +1796,10 @@ static klj_val klj_call_common(void *env, void *self, void *mid, char want,
     if (klj_drop_sentry(w)) return zero;
 
     KLJ_LOG("no host implementation for %s.%s%s", w->cls, w->name, w->sig);
+    if (!g_permissive && klj_soft_unknown()) {
+        KLJ_LOG("  ...answered with zero (KL_JNI_SOFT_UNKNOWN, the profile for untested games)");
+        return zero;
+    }
     if (!g_permissive) {
         fprintf(stderr, "[jni] this is a work item — add it to the family table in runtime/jni/.\n");
         kl_jni_report(stderr);
@@ -2323,6 +2345,10 @@ static klj_val klj_field_value(void *obj, void *fid, char want) {
     }
     if (klj_drop_sentry(w)) return (klj_val){0};
     KLJ_LOG("no host value for field %s.%s %s", w->cls, w->name, w->sig);
+    if (!g_permissive && klj_soft_unknown()) {
+        KLJ_LOG("  ...answered with zero (KL_JNI_SOFT_UNKNOWN, the profile for untested games)");
+        return (klj_val){0};
+    }
     if (!g_permissive) {
         fprintf(stderr, "[jni] this is a work item — add it to g_fields.\n");
         kl_jni_report(stderr);

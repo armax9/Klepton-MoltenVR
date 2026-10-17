@@ -1034,26 +1034,59 @@ static unsigned g_shader_pins_n;
 // Surviving Mars: Pioneer (x9863010250399155, Unity 2022.3.62f1) the sixth:
 // samplers at 99..104, 42k "Invalid texture unit!" a session and the button
 // text unreadable.
+// VRChat from Steam (x438100, Unity 6000.0.67f1) the seventh: 169k
+// "Invalid texture unit!" in a 40-second session and every menu letter a
+// wrong shape (headset, 2026-10-17).
+// ...and every Unity title under the profile for untested games (kl_driver.c):
+// seven of the eight Unity fixes for this error were these pins, and a guest
+// without the error has its samplers where its own shader text puts them, which
+// is where a Quest puts them too. Two guards come with it (klfb_pins_bind): a
+// pin whose number another uniform of the same program already holds is left
+// out rather than handed to the linker twice, and a full pin table is said.
 static int klfb_bind_pins(void) {
     static int v = -1;
     if (v < 0) {
         extern const char *kl_driver_target_name(void);
+        extern kl_guest_kind kl_driver_kind(void);
+        extern int kl_untested_profile(void);
         const char *t = kl_driver_target_name();
-        v = kl_env_on("KL_GLFB_BIND_PINS", t && (strcmp(t, "x2773034772778845") == 0 ||
-                                                 strcmp(t, "x2582932495064035") == 0 ||
-                                                 strcmp(t, "x2436558143118760") == 0 ||
-                                                 strcmp(t, "x4015163475201433") == 0 ||
-                                                 strcmp(t, "x2285803881494677") == 0 ||
-                                                 strcmp(t, "x9863010250399155") == 0));
+        v = kl_env_on("KL_GLFB_BIND_PINS", (t && (strcmp(t, "x2773034772778845") == 0 ||
+                                                  strcmp(t, "x2582932495064035") == 0 ||
+                                                  strcmp(t, "x2436558143118760") == 0 ||
+                                                  strcmp(t, "x4015163475201433") == 0 ||
+                                                  strcmp(t, "x2285803881494677") == 0 ||
+                                                  strcmp(t, "x9863010250399155") == 0 ||
+                                                  strcmp(t, "x438100") == 0)) ||
+                                           (kl_untested_profile() && kl_driver_kind() == KL_GUEST_UNITY));
     }
     return v;
 }
 
+// A slot whose shader was deleted (shader 0, see klfb_pin_forget) is taken
+// again before the table grows: a guest that loads shaders as it goes (VRChat,
+// a world and every avatar in it) would otherwise fill the table with names it
+// has long deleted, and every shader after that would lose its pins.
 static int klfb_pin_slot(uint32_t shader) {
-    for (unsigned i = 0; i < g_shader_pins_n; i++)
+    int free_slot = -1;
+    for (unsigned i = 0; i < g_shader_pins_n; i++) {
         if (g_shader_pins[i].shader == shader) return (int)i;
-    if (g_shader_pins_n >= (klfb_bind_pins() ? KLFB_PIN_SHADERS_BOUND : KLFB_PIN_SHADERS))
+        if (free_slot < 0 && g_shader_pins[i].shader == 0) free_slot = (int)i;
+    }
+    if (free_slot >= 0) {
+        g_shader_pins[free_slot].shader = shader;
+        g_shader_pins[free_slot].n = 0;
+        return free_slot;
+    }
+    if (g_shader_pins_n >= (klfb_bind_pins() ? KLFB_PIN_SHADERS_BOUND : KLFB_PIN_SHADERS)) {
+        // Said once: from here on a shader's pins are stripped and not kept, so
+        // under KL_GLFB_BIND_PINS its samplers go back to the linker's units.
+        static int said;
+        if (!said++)
+            fprintf(stderr, "  [glfb] the uniform-pin table is full (%u shaders) — later shaders "
+                            "keep no pins; a sampler among them may read the wrong texture\n",
+                    g_shader_pins_n);
         return -1;
+    }
     int i = (int)g_shader_pins_n++;
     g_shader_pins[i].shader = shader;
     g_shader_pins[i].n = 0;
@@ -1066,6 +1099,17 @@ static int klfb_pin_slot(uint32_t shader) {
 static void klfb_pin_reset(uint32_t shader) {
     for (unsigned i = 0; i < g_shader_pins_n; i++)
         if (g_shader_pins[i].shader == shader) g_shader_pins[i].n = 0;
+}
+
+// glDeleteShader: the name may come back for another shader, and the slot is
+// free for the next one. A program linked from it keeps its locations.
+static void klfb_pin_forget(uint32_t shader) {
+    if (!shader) return;
+    for (unsigned i = 0; i < g_shader_pins_n; i++)
+        if (g_shader_pins[i].shader == shader) {
+            g_shader_pins[i].shader = 0;
+            g_shader_pins[i].n = 0;
+        }
 }
 
 static void klfb_pin_note(uint32_t shader, int32_t at, const char *name) {
@@ -1214,7 +1258,13 @@ static void klfb_pins_bind(uint32_t program) {
     }
     uint32_t sh[8]; int32_t ns = 0;
     r_GetAttachedShaders(program, 8, &ns, sh);
-    unsigned bound = 0;
+    unsigned bound = 0, clashed = 0;
+    // One number, one uniform: the vertex and the fragment shader may pin the
+    // same name (it is one uniform, bound once) but never two names at one
+    // number — handed to the linker, that is a failed link and a program that
+    // draws nothing. The second such pin is left to the linker's own numbering.
+    struct { int32_t at; const char *name; } seen[KLFB_PINS * 8];
+    unsigned nseen = 0;
     for (int32_t i = 0; i < ns && i < 8; i++)
         for (unsigned s = 0; s < g_shader_pins_n; s++) {
             if (g_shader_pins[s].shader != sh[i]) continue;
@@ -1223,10 +1273,27 @@ static void klfb_pins_bind(uint32_t program) {
                 for (size_t b = 0; b < sizeof g_glsl_builtin_vars / sizeof g_glsl_builtin_vars[0]; b++)
                     if (strcmp(name, g_glsl_builtin_vars[b].from) == 0)
                         name = g_glsl_builtin_vars[b].to;
-                r_Bind(program, g_shader_pins[s].p[k].at, name);
+                int32_t at = g_shader_pins[s].p[k].at;
+                int dup = 0, clash = 0;
+                for (unsigned q = 0; q < nseen; q++) {
+                    int same_name = strcmp(seen[q].name, name) == 0;
+                    if (same_name && seen[q].at == at) dup = 1;
+                    else if (same_name || seen[q].at == at) clash = 1;
+                }
+                if (dup) continue;
+                if (clash) { clashed++; continue; }
+                if (nseen < sizeof seen / sizeof seen[0]) seen[nseen++] = (typeof(seen[0])){at, name};
+                r_Bind(program, at, name);
                 bound++;
             }
         }
+    if (clashed) {
+        static int said_clash;
+        if (said_clash++ < 8)
+            fprintf(stderr, "  [glfb] program %u: %u uniform pin%s left to the linker — the same "
+                            "number for two uniforms, or two numbers for one\n",
+                    program, clashed, clashed == 1 ? "" : "s");
+    }
     if (bound && !said) { said = 1;
         fprintf(stderr, "  [glfb] uniform pins are bound at link "
                         "(KL_GLFB_BIND_PINS): program %u, %u of them\n", program, bound); }
@@ -3343,6 +3410,7 @@ static void (*g_real_DeleteShader)(uint32_t);
 static void klfb_DeleteShader(uint32_t s) {
     klfb_census_killed(KLC_SHADER, 1);
     klfb_cs_forget(g_cs_shaders, s);          // the program keeps its own copy of the numbers
+    klfb_pin_forget(s);
     if (g_real_DeleteShader) g_real_DeleteShader(s);
 }
 static uint32_t (*g_real_CreateProgram)(void);

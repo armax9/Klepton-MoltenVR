@@ -813,6 +813,10 @@ struct BootView: View {
     private var showMic: Bool {
         ["steamlink-vr", "hl1", "cs1"].contains(klTargetName())
     }
+    // Walkabout's multiplayer rooms have voice chat (Photon Voice, AudioInAEC in
+    // kl_jni_services.c), and there the switch is a player's, not a tinkerer's:
+    // it sits with the game's own settings rather than under Advanced.
+    private var micUpFront: Bool { klTargetName() == "walkabout" }
 
     var body: some View {
         Group {
@@ -1155,6 +1159,8 @@ struct BootView: View {
                     RoomSettingsView(measure: { showSettings = false; openRoom(.setup) })
                     PlayerNameView()
                     GameLanguageView()
+                    WalkaboutUnlockView()
+                    if micUpFront { GroupBox { MicView() } }
                     // Everything a player does not need to understand to play: the
                     // dials of the port itself, and the report of this run.
                     DisclosureGroup(klT("Advanced", "Erweitert")) {
@@ -1422,6 +1428,7 @@ struct BootView: View {
         KleptonTestSwitches.applyEnvironment()
         KleptonRendering.shared.applyEnvironment()
         KleptonDiagnostics.applyEnvironment()
+        KleptonGuestInfo.applyEnvironment()
         // On the main run loop: the thread below is inside kl_app_boot for as
         // long as there is anything to show, and a timer of its own would not
         // fire until it came back.

@@ -1060,6 +1060,27 @@ GENERIC_OBB = {
 }
 
 
+def ovrp_guest_version(tree):
+    """The OVRPlugin version a game ships, read from <tree>/lib/arm64-v8a/
+    libOVRPlugin.so: the one NUL-delimited "1.<minor>.<patch>" with a minor of 20
+    or more in it (the plugin's own number; the 1.5.x beside it in most builds
+    belongs to something else). "" when there is no such library or not exactly
+    one candidate. The same rule as kl_ovrp_guest_version_in in kl_ovrp.c;
+    checked against the games whose version was set by hand (1.98.0, 1.101.1,
+    1.108.0, 1.109.0, 1.115.0)."""
+    import os, re
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, tree, "lib", "arm64-v8a", "libOVRPlugin.so")
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return ""
+    found = {m.group(1).decode() for m in re.finditer(rb"\x00(1\.(\d{1,3})\.\d{1,3})\x00", data)
+             if int(m.group(2)) >= 20}
+    return found.pop() if len(found) == 1 else ""
+
+
 def _generic_row(name):
     import os, re
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

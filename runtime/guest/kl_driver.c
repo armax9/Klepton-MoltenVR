@@ -10,6 +10,7 @@
 #include "klepton.h"
 #include "kl_driver.h"
 #include "kl_obbmap.h"
+#include "kl_tuned.h"
 #include "kl_egl.h"
 #include "kl_env.h"
 #include "kl_guestpoke.h"
@@ -378,6 +379,60 @@ kl_guest_kind kl_driver_kind(void) {
 
 const char      *kl_driver_error(void)  { return g_error; }
 const char      *kl_driver_target_name(void) { return g_target ? g_target->name : NULL; }
+
+// ---- The profile for untested games --------------------------------------
+//
+// A store title nobody here has looked at runs as a generic target: it gets
+// its engine's defaults and none of the per-title answers, and everything the
+// runtime does not know ends the run by name. That is right while a title is
+// being brought up, and it is why most untested titles stop at start. Of the
+// first 52 fixes users sent in, about twenty were a Java method with no answer,
+// about fifteen an OVRPlugin entry point or import with none, nine a missing
+// logged-in user, six an OVRPlugin version too old for the game's own C#, six
+// Unity samplers on the wrong texture units, and several GPU skinning or a
+// TLSDESC relocation.
+//
+// So a store title (x<app id>) that is not in kl_tuned.h gets better defaults:
+// unknown OVRPlugin entry points answer UNSUPPORTED (klovrp_soft_unanswered),
+// unknown Java methods and fields answer zero (klj_soft_unknown), OVRPlugin
+// reports the version the game ships (KL_OVRP_GUEST_VERSION, read from its
+// libOVRPlugin.so when the app is built), an offline player and an empty
+// purchase list (kl_ovrplat.c), TLSDESC relocations (kl_image.c), and for a
+// Unity guest on GLES its uniform pins bound at link (KL_GLFB_BIND_PINS) and
+// skinning on the CPU (klj_boot_config_extra). Each of those keeps its own
+// switch, which still wins. KL_UNTESTED=0 turns the profile off, =1 on for any
+// target. A title in kl_tuned.h keeps exactly what it was tested with.
+static int kl_target_is_store_id(const char *t) {
+    if (!t || t[0] != 'x' || !t[1]) return 0;
+    for (const char *p = t + 1; *p; p++) if (*p < '0' || *p > '9') return 0;
+    return 1;
+}
+static int kl_tuned_cmp(const void *key, const void *el) {
+    return strcmp((const char *)key, *(const char *const *)el);
+}
+int kl_target_tuned(const char *t) {
+    return t && bsearch(t, kl_tuned_targets, sizeof kl_tuned_targets / sizeof kl_tuned_targets[0],
+                        sizeof kl_tuned_targets[0], kl_tuned_cmp) != NULL;
+}
+// The same answer for a named target, for the start window, which asks before
+// the driver has one.
+int kl_untested_target(const char *t) {
+    return kl_env_on("KL_UNTESTED", kl_target_is_store_id(t) && !kl_target_tuned(t));
+}
+int kl_untested_profile(void) {
+    static int v = -1;
+    if (v >= 0) return v;
+    const char *t = kl_driver_target_name();
+    if (!t && !getenv("KL_UNTESTED")) return 0;   // asked before the target is known: not cached
+    v = kl_untested_target(t);
+    if (v)
+        fprintf(stderr, "  [klepton] %s: no title here has been tested — the profile for untested "
+                        "games is on (KL_UNTESTED): soft answers for unknown OVRPlugin and Java "
+                        "calls, the game's own OVRPlugin version, an offline player, TLSDESC, and "
+                        "for Unity on GLES its uniform pins and skinning on the CPU\n",
+                t ? t : "?");
+    return v;
+}
 int              kl_driver_gap_only(void) { return g_gap_only; }
 unsigned         kl_driver_frames(void) { return g_frames; }
 void             kl_driver_note_frame(void) { g_frames++; }
@@ -955,6 +1010,7 @@ int kl_driver_frame(void) {
     int r = ((int8_t (*)(void *, void *))g_render)(kl_jni_env(), g_thiz);
     kl_jni_local_frame_pop();
     kl_jni_drain_ui_tasks();
+    kl_jni_audioinaec_pump();
     if (r == 0 && unity_quit_teardown()) {
         // Nothing else runs against the engine this frame: no probes, no songs.
         unity_quit_teardown_run();

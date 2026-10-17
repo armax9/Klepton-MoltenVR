@@ -28,6 +28,7 @@
 #include "kl_ovrp.h"
 #include "kl_ovrplat.h"           // whether the installation lists language packs
 #include "kl_avdec.h"
+#include "kl_audio.h"
 #include "kl_egl.h"
 #include "kl_ndk.h"
 #include "kl_va.h"
@@ -2313,13 +2314,20 @@ static const char *klj_stream_bytes(klj_stream *st) {
 // limits", then "Kernel at index (11) is invalid" every frame, and only the
 // wrist gear of the player's hands drawn (on device, 2026-10-16).
 // KL_UNITY_BOOT_EXTRA="k=v;k=v" overrides the per-target default; "" for none.
+// ...and every Unity title under the profile for untested games (kl_driver.c).
+// boot.config is read before Unity picks its graphics API, so this cannot be
+// held to the GLES titles, where GPU skinning never compiles here; a Vulkan
+// title skins on the CPU too, at some CPU time, where its own would have run.
 static const char *klj_boot_config_extra(void) {
     const char *t = kl_driver_target_name();
-    const char *dflt = t &&
+    extern kl_guest_kind kl_driver_kind(void);
+    extern int kl_untested_profile(void);
+    const char *dflt = (t &&
         (strcmp(t, "x5361030930653377") == 0 ||
          strcmp(t, "x7532973430077887") == 0 ||
          strcmp(t, "x4015163475201433") == 0 ||
-         strcmp(t, "x9863010250399155") == 0)
+         strcmp(t, "x9863010250399155") == 0)) ||
+        (kl_untested_profile() && kl_driver_kind() == KL_GUEST_UNITY)
         ? "disable-gpu-skinning=1" : "";
     return kl_env_str("KL_UNITY_BOOT_EXTRA", dflt);
 }
@@ -2420,12 +2428,45 @@ static int klj_delim_whole_input(const char *d) {
 // GetMinBufferSize was the whole of "the room appears for a second and the game
 // crashes".
 //
-// There is no capture behind it yet, so it answers the way the class itself does
-// when the device will not give it a microphone: a buffer size (Photon sizes its
-// frame from it before asking for anything), then Start() == false. Photon Voice
-// logs "AudioInAEC.Start returned false" and carries on with no local voice —
-// the room, the other players and their voices are a different path. Start is
-// the one place to hang a real recorder on later; nothing else here would move.
+// What the Java class does, and so what this does: Start() opens the recorder
+// and remembers the DataCallback proxy; SetBuffer() hands over the short[] that
+// is one voice frame (Photon sizes it to its encoder frame, so no framing is
+// needed on its side); every time a frame is full, the samples go into that
+// array and DataCallback.OnData() is called, after which Photon copies the
+// array out (AndroidJNI.FromShortArray) and encodes it.
+//
+// The recorder is kl_audio's capture path — the same one Steam Link's voice
+// uses, VoiceProcessingIO, so Apple's echo cancellation stands in for the AEC
+// the Java class asked AcousticEchoCanceler for — and it exists only while the
+// start window's Microphone toggle is on. With it off, Start() answers false as
+// the class does on a device that will not give it a microphone: Photon logs
+// "AudioInAEC.Start returned false" and the room carries on without local voice.
+//
+// OnData is called from the frame pump on the game's own thread rather than
+// from the audio thread: a proxy call is managed code, and the frame pump is the
+// one seat where calling into the guest is known to be safe. Photon only queues
+// the frame there, so a frame arriving up to one game frame later costs latency,
+// not audio.
+static struct {
+    pthread_mutex_t lock;
+    void    *callback;          // the DataCallback proxy (pinned while running)
+    void    *buf;               // the short[] from SetBuffer (pinned)
+    int      running;
+    unsigned rate, ch;          // what Photon asked for
+    int16_t *acc;               // samples at rate/ch not yet delivered
+    size_t   acc_n, acc_cap;
+    double   pos;               // resampler phase, in input frames
+    int16_t  last[2];           // previous input frame, for the interpolation
+    unsigned long long frames_out;
+} g_aec = { .lock = PTHREAD_MUTEX_INITIALIZER };
+
+static void klj_aec_pin(void *o, int on) {
+    klj_object *x = klj_as_object(o);
+    if (!x) return;
+    if (on) x->pinned++;
+    else if (x->pinned) x->pinned--;
+}
+
 static klj_val klj_AudioInAEC_init(void *env, void *clazz, const klj_val *a, int n) {
     (void)env; (void)clazz; (void)a; (void)n;
     return (klj_val){.l = kl_jni_new_object("com/exitgames/photon/audioinaec/AudioInAEC")};
@@ -2438,19 +2479,148 @@ static klj_val klj_AudioInAEC_GetMinBufferSize(void *env, void *self, const klj_
     if (ch < 1 || ch > 2) ch = 1;
     return (klj_val){.j = (uint64_t)(rate / 25 * ch * 2)};
 }
+// Start(Activity, DataCallback, int sampleRate, int channels, int bufferSize,
+//       boolean aec, boolean agc, boolean ns)
 static klj_val klj_AudioInAEC_Start(void *env, void *self, const klj_val *a, int n) {
+    (void)env; (void)self;
+    unsigned rate = n > 2 && (int)a[2].j > 0 ? (unsigned)a[2].j : 48000;
+    unsigned ch = n > 3 && (int)a[3].j == 2 ? 2u : 1u;
+    if (!kl_audio_mic_enabled()) {
+        KLJ_LOG("AudioInAEC.Start -> false (the microphone is off in the start window; "
+                "the guest continues without local voice)");
+        return (klj_val){.j = 0};
+    }
+    if (kl_audio_mic_open(rate, ch) != 0) {
+        KLJ_LOG("AudioInAEC.Start -> false (no capture device)");
+        return (klj_val){.j = 0};
+    }
+    pthread_mutex_lock(&g_aec.lock);
+    if (g_aec.callback) klj_aec_pin(g_aec.callback, 0);
+    g_aec.callback = n > 1 ? a[1].l : NULL;
+    klj_aec_pin(g_aec.callback, 1);
+    g_aec.rate = rate; g_aec.ch = ch;
+    g_aec.acc_n = 0; g_aec.pos = 0; g_aec.last[0] = g_aec.last[1] = 0;
+    g_aec.running = 1;
+    pthread_mutex_unlock(&g_aec.lock);
+    // Drop what the ring collected before Photon was listening.
+    int16_t junk[1024];
+    while (kl_audio_mic_read_i16(junk, (int)(sizeof junk / sizeof *junk / 2)) > 0) {}
+    KLJ_LOG("AudioInAEC.Start(%u Hz, %u ch, aec %d agc %d ns %d) -> true: capturing %u Hz/%u ch",
+            rate, ch, n > 5 ? (int)(a[5].j & 1) : -1, n > 6 ? (int)(a[6].j & 1) : -1,
+            n > 7 ? (int)(a[7].j & 1) : -1, kl_audio_mic_rate(), kl_audio_mic_channels());
+    return (klj_val){.j = 1};
+}
+static klj_val klj_AudioInAEC_SetBuffer(void *env, void *self, const klj_val *a, int n) {
+    (void)env; (void)self;
+    klj_array *arr = n > 0 ? klj_arr(a[0].l) : NULL;
+    if (!arr || arr->kind != 'S' || arr->len <= 0) {
+        KLJ_LOG("AudioInAEC.SetBuffer: not a short[] — refused");
+        return (klj_val){.j = 0};
+    }
+    pthread_mutex_lock(&g_aec.lock);
+    if (g_aec.buf) klj_aec_pin(g_aec.buf, 0);
+    g_aec.buf = a[0].l;
+    klj_aec_pin(g_aec.buf, 1);
+    pthread_mutex_unlock(&g_aec.lock);
+    KLJ_LOG("AudioInAEC.SetBuffer: %d samples a frame", arr->len);
+    return (klj_val){.j = 1};
+}
+static klj_val klj_AudioInAEC_Stop(void *env, void *self, const klj_val *a, int n) {
     (void)env; (void)self; (void)a; (void)n;
-    KLJ_LOG("AudioInAEC.Start -> false (no microphone capture behind Photon Voice "
-            "here; the guest continues without local voice)");
-    return (klj_val){.j = 0};
+    pthread_mutex_lock(&g_aec.lock);
+    int was = g_aec.running;
+    g_aec.running = 0;
+    if (g_aec.callback) { klj_aec_pin(g_aec.callback, 0); g_aec.callback = NULL; }
+    if (g_aec.buf) { klj_aec_pin(g_aec.buf, 0); g_aec.buf = NULL; }
+    g_aec.acc_n = 0;
+    pthread_mutex_unlock(&g_aec.lock);
+    if (was) {
+        kl_audio_mic_close();
+        KLJ_LOG("AudioInAEC.Stop: %llu frames delivered", g_aec.frames_out);
+    }
+    return (klj_val){.j = 1};
+}
+static klj_val klj_AudioInAEC_GetSampleRate(void *env, void *self, const klj_val *a, int n) {
+    (void)env; (void)self; (void)a; (void)n;
+    return (klj_val){.j = g_aec.running ? g_aec.rate : 0};
 }
 static klj_val klj_AudioInAEC_false(void *env, void *self, const klj_val *a, int n) {
     (void)env; (void)self; (void)a; (void)n;
     return (klj_val){.j = 0};
 }
-static klj_val klj_AudioInAEC_true(void *env, void *self, const klj_val *a, int n) {
-    (void)env; (void)self; (void)a; (void)n;
-    return (klj_val){.j = 1};
+
+// The capture unit's samples, as Photon asked for them: channels folded or
+// doubled, then linear resampling (the unit usually runs at the hardware's
+// 48 kHz, which is also what Photon asks for, and then this is a copy).
+static void klj_aec_take(const int16_t *in, int frames, unsigned in_ch, unsigned in_rate) {
+    if (frames <= 0 || !in_rate) return;
+    double step = (double)in_rate / (double)g_aec.rate;
+    size_t need = g_aec.acc_n + (size_t)((double)frames / step + 2) * g_aec.ch;
+    if (need > g_aec.acc_cap) {
+        size_t cap = need * 2;
+        int16_t *p = realloc(g_aec.acc, cap * sizeof *p);
+        if (!p) return;
+        g_aec.acc = p; g_aec.acc_cap = cap;
+    }
+    for (int f = 0; f < frames; f++) {
+        int16_t cur[2];
+        if (in_ch == 1) cur[0] = cur[1] = in[f];
+        else { cur[0] = in[f * in_ch]; cur[1] = in[f * in_ch + 1]; }
+        // Emit every output frame whose position lies between last and cur.
+        while (g_aec.pos < 1.0) {
+            double t = g_aec.pos;
+            int l = (int)(g_aec.last[0] + (cur[0] - g_aec.last[0]) * t);
+            int r = (int)(g_aec.last[1] + (cur[1] - g_aec.last[1]) * t);
+            if (g_aec.ch == 1) g_aec.acc[g_aec.acc_n++] = (int16_t)((l + r) / 2);
+            else { g_aec.acc[g_aec.acc_n++] = (int16_t)l; g_aec.acc[g_aec.acc_n++] = (int16_t)r; }
+            g_aec.pos += step;
+        }
+        g_aec.pos -= 1.0;
+        g_aec.last[0] = cur[0]; g_aec.last[1] = cur[1];
+    }
+}
+
+void kl_jni_audioinaec_pump(void) {
+    if (!g_aec.running) return;
+    unsigned in_ch = kl_audio_mic_channels(), in_rate = kl_audio_mic_rate();
+    if (!in_ch || in_ch > 8) return;
+    int16_t tmp[4096];
+    int per = (int)(sizeof tmp / sizeof *tmp / in_ch);
+    pthread_mutex_lock(&g_aec.lock);
+    for (int got; (got = kl_audio_mic_read_i16(tmp, per)) > 0; )
+        klj_aec_take(tmp, got, in_ch, in_rate);
+    klj_array *arr = g_aec.buf ? klj_arr(g_aec.buf) : NULL;
+    void *cb = g_aec.callback;
+    size_t frame = arr ? (size_t)arr->len : 0;
+    // More than half a second behind (the game was paused, or loading) is not
+    // worth sending: keep only the newest frame's worth.
+    if (frame && g_aec.acc_n > (size_t)g_aec.rate * g_aec.ch / 2) {
+        size_t keep = g_aec.acc_n % frame + frame;
+        memmove(g_aec.acc, g_aec.acc + (g_aec.acc_n - keep), keep * sizeof *g_aec.acc);
+        g_aec.acc_n = keep;
+    }
+    while (arr && cb && frame && g_aec.acc_n >= frame) {
+        memcpy(arr->data, g_aec.acc, frame * sizeof(int16_t));
+        g_aec.acc_n -= frame;
+        memmove(g_aec.acc, g_aec.acc + frame, g_aec.acc_n * sizeof *g_aec.acc);
+        g_aec.frames_out++;
+        // Unlocked around the guest: OnData may call back into this class.
+        pthread_mutex_unlock(&g_aec.lock);
+        klj_proxy_invoke_named(cb, "com/exitgames/photon/audioinaec/AudioInAEC$DataCallback",
+                               "OnData", "()V");
+        pthread_mutex_lock(&g_aec.lock);
+        if (!g_aec.running || g_aec.buf == NULL) break;
+        arr = klj_arr(g_aec.buf);
+        cb = g_aec.callback;
+    }
+    if (g_aec.frames_out == 1 || (g_aec.frames_out && g_aec.frames_out % 3000 == 0)) {
+        static unsigned long long said;
+        if (said != g_aec.frames_out) {
+            said = g_aec.frames_out;
+            KLJ_LOG("AudioInAEC: %llu voice frames handed to Photon", g_aec.frames_out);
+        }
+    }
+    pthread_mutex_unlock(&g_aec.lock);
 }
 
 typedef struct { klj_stream *st; char delim[32]; } klj_scanner;
@@ -2876,9 +3046,9 @@ const klj_binding klj_bind_services[] = {
     {"com/exitgames/photon/audioinaec/AudioInAEC", "Start",
      "(Lcom.unity3d.player.UnityPlayerActivity;Lcom.exitgames.photon.audioinaec.AudioInAEC$DataCallback;IIIZZZ)Z",
      klj_AudioInAEC_Start},
-    {"com/exitgames/photon/audioinaec/AudioInAEC", "Stop",           "()Z",   klj_AudioInAEC_true},
-    {"com/exitgames/photon/audioinaec/AudioInAEC", "SetBuffer",      "([S)Z", klj_AudioInAEC_false},
-    {"com/exitgames/photon/audioinaec/AudioInAEC", "GetSampleRate",  "()I",   klj_AudioInAEC_false},
+    {"com/exitgames/photon/audioinaec/AudioInAEC", "Stop",           "()Z",   klj_AudioInAEC_Stop},
+    {"com/exitgames/photon/audioinaec/AudioInAEC", "SetBuffer",      "([S)Z", klj_AudioInAEC_SetBuffer},
+    {"com/exitgames/photon/audioinaec/AudioInAEC", "GetSampleRate",  "()I",   klj_AudioInAEC_GetSampleRate},
     {"com/exitgames/photon/audioinaec/AudioInAEC", "AECIsAvailable", "()Z",   klj_AudioInAEC_false},
     {"com/exitgames/photon/audioinaec/AudioInAEC", "AGCIsAvailable", "()Z",   klj_AudioInAEC_false},
     {"com/exitgames/photon/audioinaec/AudioInAEC", "NSIsAvailable",  "()Z",   klj_AudioInAEC_false},

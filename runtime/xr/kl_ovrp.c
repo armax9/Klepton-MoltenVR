@@ -83,17 +83,21 @@ static uint64_t klovrp_called(const char *name) {
     // if one is, the line below names it.
     //   default "unsupported" for x3634830803298285, x1642239225880682,
     //   x2436558143118760 (Synth Riders, told its own 1.115.0) and
-    //   x4015163475201433 (LES MILLS BODYCOMBAT, told its own 1.98.0), else "abort"
+    //   x4015163475201433 (LES MILLS BODYCOMBAT, told its own 1.98.0), and every
+    //   title under the profile for untested games (kl_untested_profile, which
+    //   also tells it its own version); else "abort"
     static int soft = -1;
     if (soft < 0) {
         const char *t = kl_driver_target_name();
         const char *e = kl_env_str("KL_OVRP_UNANSWERED", NULL);
         // ...and Richie's Plank Experience, told its own 1.101.1 for the same reason,
         // and LES MILLS BODYCOMBAT, told its own 1.98.0.
+        extern int kl_untested_profile(void);
         soft = e && *e ? !strcmp(e, "unsupported") : (t && (!strcmp(t, "x3634830803298285") ||
                                                              !strcmp(t, "x1642239225880682") ||
                                                              !strcmp(t, "x2436558143118760") ||
-                                                             !strcmp(t, "x4015163475201433")));
+                                                             !strcmp(t, "x4015163475201433"))) ||
+                                                     kl_untested_profile();
     }
     if (soft) {
         if (s >= 0 && g_ovrp[s].calls == 1)
@@ -641,6 +645,62 @@ static uint64_t klovrp_SetAppChromaticCorrection(uint64_t on) {
 // sabers and no pointer — nothing to press Continue with (on device,
 // 2026-10-12). 1.40 ships 1.60.0 and is told 1.60.0 under the same row.
 extern int kl_guest_beatsaber_openxr(void);
+
+// The OVRPlugin version a game ships, from its own libOVRPlugin.so: the one
+// NUL-delimited "1.<minor>.<patch>" with a minor of 20 or more (the plugin's
+// number; the 1.5.x beside it in most builds belongs to something else). The
+// same rule as ovrp_guest_version in visionos/targets.py, which reads it when
+// the app is built and hands it over as KL_OVRP_GUEST_VERSION — on the device
+// the bundle carries the library's translation, not the ELF, so this reader is
+// for a Mac host run. Returns 0 and leaves `out` empty unless exactly one
+// candidate is found. Exported for tests/t_untested.c.
+int kl_ovrp_guest_version_in(const char *path, char *out, size_t cap) {
+    if (cap) out[0] = 0;
+    FILE *f = path ? fopen(path, "rb") : NULL;
+    if (!f) return 0;
+    char found[24] = "";
+    int n = 0;
+    char win[24]; size_t wl = 0; int prev_nul = 1;
+    for (int c; (c = fgetc(f)) != EOF; ) {
+        if (c == 0) {
+            if (prev_nul && wl >= 6 && wl < sizeof win) {
+                win[wl] = 0;
+                unsigned a, b, p; char tail;
+                if (sscanf(win, "%u.%u.%u%c", &a, &b, &p, &tail) == 3 && a == 1 && b >= 20 &&
+                    b < 1000 && p < 1000 && strspn(win, "0123456789.") == wl) {
+                    if (!n) { snprintf(found, sizeof found, "%s", win); n = 1; }
+                    else if (strcmp(found, win) != 0) n = 2;
+                }
+            }
+            wl = 0; prev_nul = 1;
+            continue;
+        }
+        if (wl < sizeof win - 1 && ((c >= '0' && c <= '9') || c == '.')) win[wl++] = (char)c;
+        else { wl = sizeof win; }       // not a version: skip to the next NUL
+    }
+    fclose(f);
+    if (n != 1) return 0;
+    snprintf(out, cap, "%s", found);
+    return 1;
+}
+
+// What the profile for untested games tells a title as its plugin version:
+// KL_OVRP_GUEST_VERSION (from the build), else the library itself on a Mac
+// host, else NULL (the default stands).
+static const char *klovrp_guest_version(void) {
+    static char v[24];
+    const char *e = kl_env_str("KL_OVRP_GUEST_VERSION", NULL);
+    if (e && *e && strlen(e) < sizeof v && strspn(e, "0123456789.") == strlen(e)) {
+        snprintf(v, sizeof v, "%s", e);
+        return v;
+    }
+    extern const char *g_native_lib_dir;
+    char path[1024];
+    snprintf(path, sizeof path, "%s/libOVRPlugin.so", g_native_lib_dir ? g_native_lib_dir : ".");
+    return kl_ovrp_guest_version_in(path, v, sizeof v) ? v : NULL;
+}
+
+extern int kl_untested_profile(void);
 static const char *klovrp_version_str(void) {
     static const char *v;
     if (!v) {
@@ -649,6 +709,10 @@ static const char *klovrp_version_str(void) {
         if (e && *e)                                        v = e;
         else if (t && strcmp(t, "x2111191602278229") == 0)  v = "1.117.0";
         else if (kl_guest_beatsaber_openxr())               v = "1.106.0";
+        // Cubism 1.8.0 ships 1.108.0. The 1.60 default makes MetaXRFeature
+        // reject OnInstanceCreate before entering the native OpenXR bridge
+        // (owner's device log: black screen even with offline identity).
+        else if (t && strcmp(t, "x2264524423619421") == 0)  v = "1.108.0";
         // Demeo ships 1.109.0 and has a mixed-reality mode. Its C# reaches the
         // passthrough entry points only from 1.63 on (init), 1.71 (supported),
         // 1.78/1.85 (capabilities); told 1.60.0 it never asks. With its own
@@ -674,6 +738,12 @@ static const char *klovrp_version_str(void) {
         // ("[MetaXRFeature] OnInstanceCreate returned an error") and OVRPlugin
         // stays uninitialised (2026-10-09).
         else if (t && strcmp(t, "x9449316705178989") == 0)  v = "1.203.0";
+        // The profile for untested games: the version the game ships, as every
+        // title above was told by hand (kl_untested_profile; together with the
+        // soft answer for entry points a newer plugin reaches).
+        else if (kl_untested_profile() && (v = klovrp_guest_version()) != NULL)
+            fprintf(stderr, "  [ovrp] OVRPlugin %s, as the game ships it (the profile for "
+                            "untested games)\n", v);
         else                                                v = KLOVRP_VERSION_DEFAULT;
     }
     return v;
@@ -7697,7 +7767,10 @@ static int klovrp_pt_on(void) {
                                                     !strcmp(t, "x1642239225880682") ||
                                                     !strcmp(t, "x2436558143118760") ||
                                                     !strcmp(t, "x4015163475201433") ||
-                                                    !strcmp(t, "x9449316705178989")));
+                                                    !strcmp(t, "x9449316705178989") ||
+                                                    // Cubism's puzzle background can be
+                                                    // replaced by the room via its MR mode.
+                                                    !strcmp(t, "x2264524423619421")));
         if (on)
             fprintf(stderr, "  [ovrp] passthrough: offered to the guest — the room shows "
                             "through the eye picture while it submits a passthrough layer\n");

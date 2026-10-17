@@ -255,6 +255,9 @@ unsigned kl_jni_pending_ui_tasks(void);
 // this is Looper.loop() on the UI thread; there is no looper thread here, so the
 // host pumps it. Returns how many ran.
 unsigned kl_jni_drain_ui_tasks(void);
+// Photon Voice's AudioInAEC (kl_jni_services.c): hands the microphone's frames
+// to the guest's DataCallback. Called once a frame from the frame pump.
+void kl_jni_audioinaec_pump(void);
 
 // --- the on-screen keyboard, frontend side ----------------------------------
 //

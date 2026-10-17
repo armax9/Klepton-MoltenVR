@@ -179,6 +179,7 @@ static klj_val klj_ReflectionHelper_newProxyInstance(void *env, void *clazz,
     (void)env; (void)clazz;
     klj_proxy *p = calloc(1, sizeof *p);
     p->native_ptr = n > 1 ? (int64_t)a[1].j : 0;
+    p->unity_rh = 1;
     // Wrapped in a one-element array so the two doors' proxies are identical
     // down to the field, rather than alike: klj_proxy_invoke and the report
     // both read `classes` as an object array.
@@ -266,6 +267,24 @@ static klj_val klj_Method_getDeclaringClass(void *env, void *self, const klj_val
     void *r = invoke(kl_jni_env(), klj_class_object("bitter/jnibridge/JNIBridge"),
                      p->native_ptr, klj_class_object(iface),
                      klj_new_method(iface, name, sig), args);
+    klj_PopLocalFrame(NULL, NULL);
+    return r;
+}
+
+void *klj_proxy_invoke_named(void *proxy, const char *iface,
+                             const char *name, const char *sig) {
+    klj_object *o = klj_as_object(proxy);
+    klj_proxy *p = (o && strcmp(o->cls, KLJ_CLASS_PROXY) == 0) ? o->data : NULL;
+    void *fn = p && p->unity_rh
+        ? kl_jni_native("com/unity3d/player/ReflectionHelper", "nativeProxyInvoke", NULL) : NULL;
+    if (!fn) return klj_proxy_invoke(proxy, iface, name, sig, NULL);
+    if (p->disabled) return NULL;
+    // static native Object nativeProxyInvoke(long ptr, String methodName, Object[] args)
+    void *(*invoke)(void *, void *, int64_t, void *, void *) = fn;
+    klj_PushLocalFrame(NULL, 0);
+    void *r = invoke(kl_jni_env(), klj_class_object("com/unity3d/player/ReflectionHelper"),
+                     p->native_ptr, kl_jni_new_string(name),
+                     klj_new_array('L', "java/lang/Object", 0));
     klj_PopLocalFrame(NULL, NULL);
     return r;
 }

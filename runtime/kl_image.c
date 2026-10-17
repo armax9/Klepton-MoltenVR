@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <libkern/OSCacheControl.h>
 #include "kl_key.h"
+int kl_untested_profile(void);   // guest/kl_driver.c
 #include <pthread.h>
 #include <mach/mach.h>
 // vm_*, not mach_vm_*: <mach/mach_vm.h> is `#error unsupported` on both the
@@ -629,7 +630,11 @@ static int apply_relocs(kl_image *img, const Elf64_Rela *r, size_t count) {
                     // Kit (libmrutilitykitshared) is refused without it, and the
                     // title's scene layer then throws a NullReferenceException
                     // (2026-10-16).
-                                                           strcmp(t, "x9449316705178989") == 0));
+                                                           strcmp(t, "x9449316705178989") == 0) ||
+                    // ...and every title under the profile for untested games:
+                    // without it the library that has one is refused and the
+                    // game usually ends on the error that follows.
+                                       kl_untested_profile());
                 }
                 if (!on) {
                     err("unhandled relocation type %u at %#llx (ELF TLS; KL_ELF_TLSDESC=1 serves it)",

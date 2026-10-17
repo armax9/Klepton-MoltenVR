@@ -231,6 +231,15 @@ TEST_ON = ",".join(dict.fromkeys(
                         + KLT.get("test_on", ""))
     if re.fullmatch(r"KL_[A-Z0-9_]{1,60}", n)))
 
+# The OVRPlugin version the game ships (targets.ovrp_guest_version), for the
+# profile for untested games; KLOvrpGuestVersion in Info.plist. The reader only
+# ever returns digits and dots or "", so nothing else reaches the project.
+OVRP_GUEST_VERSION = targets_mod.ovrp_guest_version(KLT["tree"]) if KLT.get("tree") else ""
+if not re.fullmatch(r"(1\.\d{1,3}\.\d{1,3})?", OVRP_GUEST_VERSION):
+    OVRP_GUEST_VERSION = ""
+if OVRP_GUEST_VERSION:
+    print(f"  OVRPlugin in the game: {OVRP_GUEST_VERSION}", file=sys.stderr)
+
 # Typed wire values only: never interpolate arbitrary installer input into a project.
 CONTROLLER_MODE = os.environ.get("KLEPTON_CONTROLLER_MODE", "standard")
 if CONTROLLER_MODE not in ("standard", "surreal"):
@@ -340,6 +349,9 @@ ASSETCATALOG_SETTING = ((f"\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = \"{_icon
                         # `productStart`). An installer asks for the second with
                         # KLEPTON_START_SCREEN=1; KLStartScreen in Info.plist.
                         + f"\t\t\t\tKL_START_SCREEN = {1 if os.environ.get('KLEPTON_START_SCREEN') == '1' else 0};\n"
+                        # ...and the OVRPlugin version the game ships
+                        # (OVRP_GUEST_VERSION above; KLOvrpGuestVersion).
+                        + f"\t\t\t\tKL_OVRP_GUEST_VERSION = \"{OVRP_GUEST_VERSION}\";\n"
                         # ...and which Test switches this installation has ON
                         # until its owner says otherwise in the game
                         # (KLEPTON_TEST_ON, the variables' names with commas
@@ -455,6 +467,7 @@ SWIFT = ["KleptonApp.swift", "KleptonCompositor.swift", "KleptonControllers.swif
          "KleptonSurrealAim.swift", "KleptonSurrealAimView.swift",
          "KleptonMetalFXPreset.swift", "KleptonMetalFXAlpha.swift",
          "KleptonEyeMax.swift", "KleptonOverlayDepth.swift",
+         "KleptonWalkaboutSave.swift",
          "KleptonRoomStore.swift", "KleptonRoomSpace.swift", "KleptonBoundary.swift"]
 # Steam's connection, sign-in and Steam Cloud (SteamCloudKit/README.md: parts of
 # Glovebox's SteamLauncherKit, MIT), compiled into the app's own module. The

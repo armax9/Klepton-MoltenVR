@@ -301,7 +301,11 @@ void *klj_unity_player_made(void);
 
 typedef struct { char *url; char *path; int found, logged; } klj_webdoc;
 typedef struct { void **items; int count; } klj_list;
-typedef struct { int64_t native_ptr; void *classes; int disabled; } klj_proxy;
+// `unity_rh`: made by ReflectionHelper.newProxyInstance (Unity 6's door) rather
+// than JNIBridge.newInterfaceProxy. Such a proxy's native_ptr is meant for
+// ReflectionHelper.nativeProxyInvoke, not for JNIBridge.invoke; see
+// klj_proxy_invoke_named.
+typedef struct { int64_t native_ptr; void *classes; int disabled; int unity_rh; } klj_proxy;
 typedef struct { void *looper, *callback; } klj_handler;
 typedef struct { int32_t what, arg1, arg2; void *obj, *target; } klj_message;
 typedef struct {
@@ -337,6 +341,12 @@ klj_message *klj_as_message(void *obj);
 size_t       klj_stream_read(klj_stream *st, void *buf, size_t want);
 void         klj_stream_close(klj_stream *st);
 void         klj_stream_free(void *p);
+// A call by method NAME, the way Unity 6's own proxy handler makes it: a
+// ReflectionHelper proxy goes through ReflectionHelper.nativeProxyInvoke(ptr,
+// name, args); any other proxy falls back to klj_proxy_invoke. Only the callers
+// that know their proxy can be Unity 6's use it (Photon's AudioInAEC callback).
+void        *klj_proxy_invoke_named(void *proxy, const char *iface,
+                                    const char *name, const char *sig);
 void        *klj_proxy_invoke(void *proxy, const char *iface,
                               const char *name, const char *sig, void *args);
 void        *klj_FromReflectedField(void *env, void *field);

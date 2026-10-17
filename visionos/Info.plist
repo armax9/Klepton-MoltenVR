@@ -49,6 +49,8 @@
 	<string>$(KL_OUTPUT_DEFAULT)</string>
 	<key>KLStartScreen</key>
 	<string>$(KL_START_SCREEN)</string>
+	<key>KLOvrpGuestVersion</key>
+	<string>$(KL_OVRP_GUEST_VERSION)</string>
 	<key>KLMetaApkID</key>
 	<string>$(KL_DATA_APK_ID)</string>
 	<key>KLMetaObbID</key>
