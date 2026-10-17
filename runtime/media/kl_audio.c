@@ -25,6 +25,7 @@
 #include <AudioToolbox/AudioToolbox.h>
 
 #include "klepton.h"
+#include "kl_key.h"
 #include "kl_audio.h"
 #include "guest/kl_driver.h"
 
@@ -1665,9 +1666,11 @@ static void mix_bufs_free(void *p) {
     free(b->out);
     free(b);
 }
-static void mix_key_make(void) { pthread_key_create(&g_mix_key, mix_bufs_free); }
+static int g_mix_key_ok;
+static void mix_key_make(void) { g_mix_key_ok = kl_key_create(&g_mix_key, mix_bufs_free, "the audio mix buffers"); }
 static mix_bufs *mix_bufs_get(void) {
     pthread_once(&g_mix_once, mix_key_make);
+    if (!g_mix_key_ok) return NULL;   // no buffers: mix_write drops the block
     mix_bufs *b = pthread_getspecific(g_mix_key);
     if (!b) {
         b = calloc(1, sizeof *b);

@@ -1469,7 +1469,42 @@ final class KleptonControllers {
     /// waiting is a matter of time passing.
     private var pillBits: [UInt32] = [0, 0]
     private static let panelButtons = klEnvOn("KL_STATS_CARD_BUTTONS", default: true)
+    private static let ghostTownInput = klEnvOn("KL_GHOSTTOWN_INPUT", default: false)
+    /// The host recenter (KleptonCompositor.recenterXform), applied to the
+    /// controller poses as it is to the head. Identity until a recenter.
+    var trackingRebase = matrix_identity_float4x4
+    private var ghostTownRecenterSince: Double?
+    private var ghostTownRecenterFired = false
     private func applyPanelChord() {
+        // Ghost Town (community PR #41): Options is the Quest Menu button, held
+        // and released as pressed, and the right one held for a second
+        // recenters (KleptonCompositor.pendingRecenter).
+        if Self.ghostTownInput {
+            lock.lock(); defer { lock.unlock() }
+            let now = ProcessInfo.processInfo.systemUptime
+            let rightDown = state[1].fromController && state[1].pill != 0
+            if rightDown {
+                if ghostTownRecenterSince == nil { ghostTownRecenterSince = now }
+                if !ghostTownRecenterFired, let since = ghostTownRecenterSince, now - since >= 1 {
+                    KleptonCompositor.pendingRecenter = true
+                    ghostTownRecenterFired = true
+                    NSLog("[cp] Ghost Town: right Options hold requested host recenter")
+                }
+            } else {
+                ghostTownRecenterSince = nil
+                ghostTownRecenterFired = false
+            }
+            // Preserve the entire press/hold, rather than delaying it through
+            // the metrics-panel chord. Left is Quest Menu; right also exposes
+            // Back for titles that use that bit for their system-button prompt.
+            for h in 0...1 where state[h].fromController {
+                let down = state[h].pill != 0
+                let menu: UInt32 = down ? (h == 0 ? OVRPRawButton.start : OVRPRawButton.start | OVRPRawButton.back) : 0
+                state[h].buttons = state[h].otherButtons | menu
+                state[h].touches = state[h].otherTouches | state[h].buttons
+            }
+            return
+        }
         guard Self.panelButtons else { return }
         lock.lock(); defer { lock.unlock() }
         // A tap is passed on after the button is up again, with the bits it had.
@@ -2437,6 +2472,14 @@ final class KleptonControllers {
                 continue
             }
 
+            if let rawP = st.position, let rawQ = st.orientation {
+                let rot = simd_quatf(trackingRebase)
+                let hp = trackingRebase * SIMD4<Float>(rawP.x, rawP.y, rawP.z, 1)
+                st.position = SIMD3<Float>(hp.x, hp.y, hp.z)
+                st.orientation = rot * rawQ
+                st.linearVelocity = rot.act(st.linearVelocity)
+                st.angularVelocity = rot.act(st.angularVelocity)
+            }
             submit(st, hand: hand)
         }
         reportPinch()

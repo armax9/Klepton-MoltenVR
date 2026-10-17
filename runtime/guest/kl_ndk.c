@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "kl_key.h"
 #include <unistd.h>
 #include "kl_ndk.h"
 #include "kl_obbmap.h"
@@ -52,16 +53,18 @@ typedef struct kl_looper {
 
 static pthread_key_t  g_looper_key;
 static pthread_once_t g_looper_once = PTHREAD_ONCE_INIT;
-static void kl_looper_key_init(void) { pthread_key_create(&g_looper_key, NULL); }
+static int g_looper_key_ok;
+static void kl_looper_key_init(void) { g_looper_key_ok = kl_key_create(&g_looper_key, NULL, "the ALooper of each thread"); }
 
 static kl_looper *kl_ALooper_forThread(void) {
     pthread_once(&g_looper_once, kl_looper_key_init);
-    return pthread_getspecific(g_looper_key);
+    return g_looper_key_ok ? pthread_getspecific(g_looper_key) : NULL;
 }
 
 static kl_looper *kl_ALooper_prepare(int opts) {
     kl_looper *l = kl_ALooper_forThread();
     if (l) return l;
+    if (!g_looper_key_ok) return NULL;   // no key: no looper can be kept
 
     l = calloc(1, sizeof *l);
     if (!l) return NULL;

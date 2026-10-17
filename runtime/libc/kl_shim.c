@@ -947,8 +947,12 @@ static void klb_freeifaddrs(struct ifaddrs *ifa) { freeifaddrs(ifa); }
 // Recv failure: Undefined error: 0". Walkabout Mini Golf's PlayFab sign-in
 // died on it, and the game sat out its offline wait in the loading screen
 // (on the headset, 2026-10-16: 563.2 and 567 slow, 371 signed in at once).
+// The same rule broke Flight Unlimited's Cesium tiles at random: curl reset
+// an HTTP/2 stream on a repeated EAGAIN it read as 0 (headset 2026-10-16).
 // A shim knows its host call failed, so it says so; `e` is errno as the host
-// call left it, taken before any trace output can change it.
+// call left it, taken before any trace output can change it. Every socket and
+// fd call below goes through here: send, recv and their to/from/msg forms,
+// connect, accept, read, write, readv and writev.
 void kl_errno_set(int darwin_errno);    // kl_libc.c
 static ssize_t kl_net_ret(ssize_t r, int e) {
     if (r < 0) kl_errno_set(e);
@@ -1434,22 +1438,6 @@ static void kl_sendmsg_fanout(int fd, struct msghdr *h, int dflags) {
                         "%u unicast of %u\n", ntohs(port), ok, ntgt);
 }
 
-// A failed send/recv hands the guest THIS call's errno, through kl_errno_set
-// rather than Darwin's errno alone. klb_errno resolves "Darwin's errno did not
-// move" as a guest write, and a non-blocking socket read in a loop is exactly
-// that case: the TLS layer clears errno, recv fails EAGAIN again, Darwin's
-// errno is still the EAGAIN of the previous call — and the guest reads its own
-// 0. To curl that is a socket error, not "no data yet": it resets the stream
-// and reports "Failed to receive data". Flight Unlimited lost its Cesium
-// imagery metadata and most terrain tiles this way, at random, whenever the
-// server was a moment slower than the second read (headset 2026-10-16).
-static ssize_t kl_net_errno(ssize_t r) {
-    if (r < 0) {
-        extern void kl_errno_set(int);
-        kl_errno_set(errno);
-    }
-    return r;
-}
 static ssize_t kl_sendto(int fd, const void *buf, size_t n, int flags,
                          const struct sockaddr *sa, socklen_t len) {
     struct sockaddr_storage hs;
@@ -1500,8 +1488,7 @@ static ssize_t kl_send(int fd, const void *buf, size_t n, int flags) {
         fprintf(stderr, "  [net] send(fd=%d, %zu B, flags=0x%x->0x%x) -> %zd%s\n",
                 fd, n, flags, dflags, r, r < 0 ? strerror(e) : "");
     kl_hexdump("->", buf, r);
-    errno = e;
-    return kl_net_errno(r);
+    return kl_net_ret(r, e);
 }
 // ---------- KL_NET_RATE=<seconds>: what is actually arriving ----------
 // A streaming client cannot tell you from inside itself whether the picture is
@@ -1608,13 +1595,13 @@ static ssize_t kl_recv(int fd, void *buf, size_t n, int flags) {
         fprintf(stderr, "  [net] recv(fd=%d, %zu B, flags=0x%x->0x%x) -> %zd%s\n",
                 fd, n, flags, dflags, r, r < 0 ? strerror(e) : "");
     kl_hexdump("<-", buf, r);
-    errno = e;
-    return kl_net_errno(r);
+    return kl_net_ret(r, e);
 }
 static int kl_accept(int fd, struct sockaddr *sa, socklen_t *len) {
     int r = accept(fd, sa, len);
+    int e = errno;
     if (r >= 0) kl_sa_to_guest(sa, len);
-    return r;
+    return (int)kl_net_ret(r, e);   // a non-blocking listener's EAGAIN
 }
 static ssize_t kl_recvfrom(int fd, void *buf, size_t n, int flags,
                            struct sockaddr *sa, socklen_t *len) {
@@ -1873,6 +1860,22 @@ static int kl_getsockname(int fd, struct sockaddr *sa, socklen_t *len) {
 static int kl_fd_is_regular(int fd) {
     struct stat st;
     return fstat(fd, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+// write, writev and readv: Darwin's own calls, with the failure published as for
+// read below — a full non-blocking pipe or socket fails EAGAIN again and again,
+// and a closed peer EPIPE.
+static ssize_t kl_shim_write(int fd, const void *buf, size_t n) {
+    ssize_t r = write(fd, buf, n);
+    return r < 0 ? kl_net_ret(r, errno) : r;
+}
+static ssize_t kl_shim_writev(int fd, const struct iovec *iov, int cnt) {
+    ssize_t r = writev(fd, iov, cnt);
+    return r < 0 ? kl_net_ret(r, errno) : r;
+}
+static ssize_t kl_shim_readv(int fd, const struct iovec *iov, int cnt) {
+    ssize_t r = readv(fd, iov, cnt);
+    return r < 0 ? kl_net_ret(r, errno) : r;
 }
 
 ssize_t kl_shim_read(int fd, void *buf, size_t n) {
@@ -2415,6 +2418,7 @@ static const kl_entry g_shim[] = {
     E("open", klv_open), E("fcntl", klv_fcntl), E("ioctl", klv_ioctl),
     E("setsockopt", kl_setsockopt), E("getsockopt", kl_getsockopt),
     E("read", kl_shim_read), E("usleep", kl_usleep),
+    E("write", kl_shim_write), E("writev", kl_shim_writev), E("readv", kl_shim_readv),
     E("close", klb_close), E("lseek", klb_lseek), E("pread", klb_pread),
     E("getaddrinfo", kl_getaddrinfo), E("connect", kl_connect),
     E("socket", kl_socket),

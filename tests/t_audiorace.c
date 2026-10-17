@@ -17,7 +17,13 @@
 //
 // Two processes: sources MIXED with the unlocked wait (Steam Link's path), and
 // one owner (every other title's). Each must finish without a crash and within
-// a deadline — a deadlock is a timeout. `make audio-race-asan` builds it with
+// a deadline — a deadlock is a timeout.
+//
+// A case runs until it has done a fixed amount of work (MIN_REOPENS rounds,
+// MIN_WRITES writes, MIN_SHORT short-lived threads), not for a fixed time:
+// opening the output device is slow on a loaded Mac, and a 3-second run there
+// once did 5 rounds and failed a count it would have passed given longer. The
+// clock only bounds the run, for the deadlock. `make audio-race-asan` builds it with
 // AddressSanitizer. Opens the real output device; a host without one SKIPs.
 #include <math.h>
 #include <pthread.h>
@@ -33,8 +39,11 @@
 
 #include "media/kl_audio.h"
 
-#define RUN_SECS   3
-#define DEADLINE_S 60
+#define MIN_SECS    3    // at least this long, so writers and churn overlap
+#define MIN_REOPENS 20
+#define MIN_WRITES  200
+#define MIN_SHORT   8
+#define DEADLINE_S  60
 
 static atomic_int g_stop;
 static atomic_ulong g_writes, g_reopens, g_short_threads;
@@ -117,7 +126,8 @@ static void *churn(void *unused) {
 
 static void on_alarm(int sig) {
     (void)sig;
-    static const char msg[] = "FAIL: did not finish within the deadline — a deadlock\n";
+    static const char msg[] = "FAIL: did not finish within the deadline — a deadlock, "
+                              "or the writers or the churn made no progress\n";
     write(STDOUT_FILENO, msg, sizeof msg - 1);
     _exit(2);
 }
@@ -151,7 +161,18 @@ static int run(int mixed) {
     pthread_create(&tb, NULL, writer_thread, &b);
     pthread_create(&tc, NULL, churn, NULL);
     pthread_create(&ts, NULL, short_lived, NULL);
-    sleep(RUN_SECS);
+    // Until both the time and the work are done; a run that never gets there is
+    // the deadline's to report.
+    struct timespec t0, now;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (;;) {
+        nap_us(10000);
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        if (now.tv_sec - t0.tv_sec >= MIN_SECS &&
+            atomic_load(&g_reopens) >= MIN_REOPENS && atomic_load(&g_writes) >= MIN_WRITES &&
+            atomic_load(&g_short_threads) >= MIN_SHORT)
+            break;
+    }
     atomic_store(&g_stop, 1);
     kl_audio_pause();                       // lets a writer out of its wait at once
     pthread_join(ta, NULL);
@@ -165,7 +186,7 @@ static int run(int mixed) {
     printf("  %lu writes, %lu reopen/close/flush/restart rounds, %lu short-lived writer "
            "threads — no crash, no deadlock\n",
            atomic_load(&g_writes), atomic_load(&g_reopens), atomic_load(&g_short_threads));
-    return atomic_load(&g_reopens) > 10 && atomic_load(&g_writes) > 100 ? 0 : 3;
+    return 0;
 }
 
 int main(void) {

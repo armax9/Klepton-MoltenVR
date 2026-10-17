@@ -2303,6 +2303,10 @@ typedef struct { int32_t type; const void *next; uint64_t requestId; int32_t res
 _Static_assert(sizeof(klxr_ev_set_status_complete) == 64, "XrEventDataSpaceSetStatusCompleteFB");
 enum { KLXR_SCENE_EV_AVAILABLE, KLXR_SCENE_EV_COMPLETE, KLXR_SCENE_EV_SET_STATUS };
 #define KLXR_SCENE_EV_MAX 64
+// Not locked, and neither is g_disc below: both are written by the guest's
+// xrDiscoverSpacesMETA / xrSetSpaceComponentStatusFB and read by its
+// xrPollEvent, which an OpenXR app normally calls from its session thread.
+// A guest that split those across threads would need a lock.
 static struct { int what; uint64_t request; void *space; klxr_uuid uuid; int32_t comp; uint32_t enabled; }
     g_scene_ev[KLXR_SCENE_EV_MAX];
 static unsigned g_scene_ev_next;
@@ -3651,7 +3655,11 @@ static XrResult klxr_RetrieveSpaceDiscoveryResultsMETA(void *session, uint64_t r
     if (!out->results) KLXR_RET(KLXR_ERROR_VALIDATION_FAILURE);
     for (uint32_t k = 0; k < n; k++) {
         int i = g_disc[slot].idx[k];
-        out->results[k].space = klxr_anchor_space(s, i);
+        // The space pool can be full: say so rather than hand out a NULL space
+        // the guest would locate and dereference as a handle.
+        klxr_space *sp = klxr_anchor_space(s, i);
+        if (!sp) KLXR_RET(KLXR_ERROR_LIMIT_REACHED);
+        out->results[k].space = sp;
         kl_ovrp_room_uuid(i, out->results[k].uuid.data);
     }
     return KLXR_SUCCESS;

@@ -2262,6 +2262,11 @@ final class KleptonCompositor {
                 simd_float4( sy, 0,  cy, 0),
                 simd_float4( px, 0,  pz, 1))
             recenterXform = m.inverse * recenterXform
+            controllers.trackingRebase = recenterXform
+            // The new tracking-space poses first, then the count the guest
+            // reads (kl_ovrp_notify_recenter, GetLocalTrackingSpaceRecenterCount).
+            updatePoses(at: ProcessInfo.processInfo.systemUptime)
+            kl_ovrp_notify_recenter()
             NSLog("[cp] RECENTER: yaw %.1f deg, pos (%.2f, %.2f) folded into the origin",
                   yaw * 180 / .pi, px, pz)
         }

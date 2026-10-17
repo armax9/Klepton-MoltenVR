@@ -225,6 +225,7 @@ mmap madvise sysinfo
 warnx fopen64 fseeko64 ftello64 __fwrite_chk exit _exit chdir
 putenv
 inet_pton inet_ntop
+write readv writev
 """.split())
 # The signal NUMBER entry points, which carry the Linux<->Darwin SIGUSR2/SIGSYS
 # swap (kl_sig_to_darwin in kl_libc.c).

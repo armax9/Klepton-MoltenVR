@@ -10,6 +10,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <libkern/OSCacheControl.h>
+#include "kl_key.h"
 #include <pthread.h>
 #include <mach/mach.h>
 // vm_*, not mach_vm_*: <mach/mach_vm.h> is `#error unsupported` on both the
@@ -417,7 +418,7 @@ static unsigned        g_tls_nmod;
 static pthread_mutex_t g_tls_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_key_t   g_tls_key;
 static pthread_once_t  g_tls_once = PTHREAD_ONCE_INIT;
-static void tls_key_make(void) { pthread_key_create(&g_tls_key, NULL); }
+static void tls_key_make(void) { kl_key_create_or_die(&g_tls_key, NULL, "the guest's TLS blocks"); }
 
 // Register an image's PT_TLS; returns tls_mod (index + 1), or 0 if none/full.
 static int tls_register(kl_image *img, const Elf64_Phdr *ph, int phnum, uint64_t lo) {

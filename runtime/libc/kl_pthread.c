@@ -32,6 +32,7 @@
 #include <time.h>
 #include <dispatch/dispatch.h>
 #include "klepton.h"
+#include "kl_key.h"
 #include "kl_env.h"
 #include "kl_x18.h"
 
@@ -1292,7 +1293,8 @@ static void tsd_thread_exit(void *p) {
     pthread_setspecific(g_tsd_key, NULL);
     free(s);
 }
-static void tsd_init(void) { pthread_key_create(&g_tsd_key, tsd_thread_exit); }
+// Every guest key lives behind this one, so there is no going on without it.
+static void tsd_init(void) { kl_key_create_or_die(&g_tsd_key, tsd_thread_exit, "the guest's pthread keys"); }
 // No pthread_once here on purpose: every caller has already passed key_live(),
 // and a key cannot be live until klb_pthread_key_create has run the once. This
 // path is hot — UE4's binned allocator reads TLS on every malloc — so it is

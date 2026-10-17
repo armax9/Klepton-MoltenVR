@@ -867,7 +867,8 @@ The guest's own memory management, and the three seams that used to disable it.
   BODYCOMBAT, every TextMeshPro glyph a block) and
   `x2285803881494677` (Gun Club VR: black gun materials and repeated
   invalid texture-unit errors, surface detail with the pins, as its fix was
-  sent in), else 0.
+  sent in) and `x9863010250399155` (Surviving Mars: Pioneer, Unity
+  2022.3.62f1: samplers at 99..104, its button text unreadable), else 0.
 - `KL_GLFB_TEX_MS_ANGLE=0|1` — (`runtime/gfx/kl_glfb.c`) serve the guest's
   `glTexStorage2DMultisample` (ES 3.1) through ANGLE's
   `glTexStorage2DMultisampleANGLE`, which an ES 3.0 context accepts. Without
@@ -1930,8 +1931,9 @@ puts the camera on the ground with its hands underneath it.
 - `KL_UNITY_BOOT_EXTRA="<k=v;k=v>"` — lines appended to a Unity guest's
   `bin/Data/boot.config` as `AssetManager.open` serves it (the file on disk is
   untouched); `;` separates lines, empty means none. Default empty, except
-  Eye of the Temple (x5361030930653377) and LES MILLS BODYCOMBAT
-  (x4015163475201433): `disable-gpu-skinning=1`, because their
+  Eye of the Temple (x5361030930653377), LES MILLS BODYCOMBAT
+  (x4015163475201433) and Surviving Mars: Pioneer (x9863010250399155, its
+  hands): `disable-gpu-skinning=1`, because their
   compute-shader skinning cannot compile on ANGLE's ES 3.0 context
   ("Internal-Skinning.main: GLSL compilation failed") and every skinned mesh,
   the whip among them, was never drawn.
@@ -2060,6 +2062,18 @@ puts the camera on the ground with its hands underneath it.
   overlay leaves the published set alone instead of emptying it (which blinked
   AC Nexus's cards off every few seconds). Default 1 for `x5812519008825194`,
   else 0.
+- `KL_OVRP_ENQ_RETIRE=0|1` — a panel the guest destroys (`ovrp_DestroyLayer`,
+  or `ovrp_EnqueueDestroyLayer` with the id behind a pointer, as Ghost Town's
+  plugin passes it) is taken out of the visible set and the batch being
+  gathered at once, and when enqueue submits stop the batch is dropped as
+  well, so a retired panel cannot come back with the next flush. Without it
+  Ghost Town's fade quads stayed up as a white sheet. Default 1 for
+  `x9531494193591052` (Ghost Town, community PR #41), else 0. Host test:
+  `make ovrplayers`.
+- `KL_OVRP_RECENTER_COUNT=0|1` — `ovrp_GetLocalTrackingSpaceRecenterCount`
+  answers how often the host has recentered (the compositor's recenter, after
+  it has moved the head and the controllers) instead of 0. Default 1 for
+  `x9531494193591052`, else 0.
 - `KL_OVRP_POSE_TIME=0|1` — fill `ovrpPoseStatef.Time` in
   `ovrp_GetNodePoseState` with the moment the step's sample was latched instead
   of leaving it 0. AC Nexus moves its physical hand bodies only when the
@@ -4239,6 +4253,33 @@ PER GUEST FRAME`.
   `runtime/diag/kl_metrics.c`, `visionos/Sources/KleptonMetrics.swift`
   (drawing only — runs on a Mac with made-up samples), `encodeStatsCard`.
   Tests: `build/t_metrics`, `build/t_mtlbusy`.
+
+## Ghost Town (`x9531494193591052`, community PR #41)
+
+Taken over from sibest's PR, scoped to this title; the proximity sensor from the
+same PR is issue #42. Set by `kl_driver_env_defaults` for the title:
+`KL_GHOSTTOWN_INPUT`, `KL_ELF_TLSDESC`, `KL_AUDIO_ONE_OUTPUT`,
+`KL_GHOSTTOWN_OVERLAY_COLOR`, `KL_OVRP_ENQ_OWNS_OVERLAYS`; by its own defaults:
+`KL_OVRP_ENQ_RETIRE`, `KL_OVRP_RECENTER_COUNT`, `KL_OVRP_ADAPTER_PHYS`,
+`KL_VK_PARK_INSTANCE`, `KL_OVERLAY_TEXL` (off), `KL_OVRP_TEXPTR_INDIRECT`,
+`KL_OVRP_SPACEWARP_TEX`, `KL_AAUDIO_MMAP_POLICY`; and the eye unification list.
+
+- `KL_GHOSTTOWN_INPUT=0|1` — (`KleptonControllers.swift`) Options is the Quest
+  Menu button, held and released as pressed (left: Start; right: Start and
+  Back), instead of going through the metrics panel's chord; the right one held
+  for a second recenters (`KleptonCompositor.pendingRecenter`).
+- `KL_GHOSTTOWN_OVERLAY_COLOR=0|1` — an enqueued panel keeps the per-layer
+  colour scale and offset the guest files with it (for Ghost Town's panels),
+  applied in the overlay shader.
+- `KL_AAUDIO_MMAP_POLICY=0|1` — answer `AAudio_getMMapPolicy`,
+  `AAudio_setMMapPolicy`, `AAudio_getPlatformMMapPolicy`,
+  `AAudio_getPlatformMMapExclusivePolicy` and `AAudio_isMMapSupported` (mmap
+  unavailable, AUTO accepted), which the Oboe in Ghost Town asks for. Default 1
+  for `x9531494193591052`; every other guest is told the names are not there.
+- Its scenes are loose AssetBundles in `Android/obb/<package>`
+  (`visionos/targets.py`, `GENERIC_OBB`), and its own Java class
+  `DetectHeadphones` is answered by `runtime/jni/kl_jni_ghosttown.c` (no jack
+  here, so no plug event is ever sent).
 
 ## Test switches that are on from the installation (`KLEPTON_TEST_ON`)
 

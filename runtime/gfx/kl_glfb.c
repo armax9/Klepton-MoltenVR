@@ -45,6 +45,7 @@
 #include "kl_fault.h"      // kl_fault_print_frames — who issued a GL call
 #include "kl_target.h"     // kl_guest_kind — defaults that hold for one engine
 #include "klepton.h"       // kl_trace_stub, for the per-name GL call trace
+#include "kl_key.h"
 
 // ---- the EGL/GLES constants used here, so there is nothing to include ----
 #define EGL_DEFAULT_DISPLAY  ((void *)0)
@@ -546,7 +547,10 @@ typedef struct { void *ctx, *surf; int probed; int debug_cb; } klfb_thread_gl;
 
 static void klfb_tls_free(void *p) { free(p); }
 static int g_tls_ready;
-static void klfb_tls_init(void) { pthread_key_create(&g_tls_key, klfb_tls_free); g_tls_ready = 1; }
+static void klfb_tls_init(void) {
+    kl_key_create_or_die(&g_tls_key, klfb_tls_free, "the per-thread GL contexts");
+    g_tls_ready = 1;
+}
 
 // ---- emulation state, kept PER CONTEXT -------------------------------------
 //
@@ -1027,6 +1031,9 @@ static unsigned g_shader_pins_n;
 // Gun Club VR (x2285803881494677) the fifth: black gun materials and repeated
 // "Invalid texture unit!", surface detail on the gun with the pins on (fix 44,
 // 2026-10-15, its sender's screenshots; not run here).
+// Surviving Mars: Pioneer (x9863010250399155, Unity 2022.3.62f1) the sixth:
+// samplers at 99..104, 42k "Invalid texture unit!" a session and the button
+// text unreadable.
 static int klfb_bind_pins(void) {
     static int v = -1;
     if (v < 0) {
@@ -1036,7 +1043,8 @@ static int klfb_bind_pins(void) {
                                                  strcmp(t, "x2582932495064035") == 0 ||
                                                  strcmp(t, "x2436558143118760") == 0 ||
                                                  strcmp(t, "x4015163475201433") == 0 ||
-                                                 strcmp(t, "x2285803881494677") == 0));
+                                                 strcmp(t, "x2285803881494677") == 0 ||
+                                                 strcmp(t, "x9863010250399155") == 0));
     }
     return v;
 }

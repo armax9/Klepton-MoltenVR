@@ -24,6 +24,7 @@
 #include <CommonCrypto/CommonCryptoError.h>    // kCCSuccess
 #include <CommonCrypto/CommonCryptor.h>        // ...and its AES-CBC cryptor
 #include "klepton.h"
+#include "kl_key.h"
 #include "kl_jni.h"
 #include "kl_fault.h"
 #include "guest/kl_driver.h"   // the target name, for per-target JNI defaults
@@ -1520,6 +1521,7 @@ static const klj_binding *klj_find_binding(const char *cls, const char *name,
     const klj_binding *own = klj_firebase_binding(cls, name, sig);
     if (!own) own = klj_vivox_binding(cls, name, sig);
     if (!own) own = klj_vertigo_binding(cls, name, sig);
+    if (!own) own = klj_ghosttown_binding(cls, name, sig);
     if (own) return own;
     // Exact wins outright across EVERY family table, so the answer does not
     // depend on which file a class landed in; a loose match is only ever the
@@ -2910,7 +2912,7 @@ typedef struct { void *functions; } klj_env_t;
 static pthread_key_t  g_env_key;
 static void klj_build_tables(void);
 static void klj_init(void) {
-    pthread_key_create(&g_env_key, free);
+    kl_key_create_or_die(&g_env_key, free, "the per-thread JNIEnv");
     // The defaults are relative literals; the setters resolve what they are
     // given, so this covers the case where nothing set them.
     g_assets_dir     = klj_abspath(g_assets_dir);
@@ -2941,6 +2943,7 @@ void *kl_jni_env(void) {
     klj_env_t *e = pthread_getspecific(g_env_key);
     if (!e) {
         e = calloc(1, sizeof *e);
+        if (!e) abort();
         e->functions = g_env_vtable;
         pthread_setspecific(g_env_key, e);
         kl_thread_init();

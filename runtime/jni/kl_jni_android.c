@@ -420,7 +420,7 @@ static klj_val klj_Intent_getExtras(void *env, void *self, const klj_val *a, int
             extras = klj_new_object_data("android/os/Bundle", kv);
             ((klj_object *)extras)->pinned = 1;   // host-held across frames
             for (int i = 0; i < k; i++)
-                KLJ_LOG("launch extra %s = \"%s\"", kv[i].key, kv[i].val);
+                KLJ_LOG("launch extra %s (%zu bytes)", kv[i].key, kv[i].val ? strlen(kv[i].val) : 0);
         }
     }
     return (klj_val){.l = extras};
@@ -430,7 +430,11 @@ static klj_val klj_Intent_init(void *env, void *clazz, const klj_val *a, int n) 
     (void)env; (void)clazz;
     const char *action = n > 0 ? klj_str(a[0].l) : NULL;
     void       *obj    = kl_jni_new_object("android/content/Intent");
+    if (!obj) return (klj_val){.l = NULL};
+    // Owned, as every other writer of an Intent's data is (setAction frees the
+    // old one): without it the action leaked when the object was recycled.
     klj_as_object(obj)->data = action ? strdup(action) : NULL;
+    klj_own(obj, free);
     KLJ_LOG("new Intent(\"%s\")", action ? action : "(null)");
     return (klj_val){.l = obj};
 }
@@ -533,6 +537,7 @@ static klj_val klj_Context_registerReceiver(void *env, void *self, const klj_val
     }
 
     void *obj = kl_jni_new_object("android/content/Intent");
+    if (!obj) return (klj_val){.l = NULL};
     klj_as_object(obj)->data = strdup(KLJ_ACTION_BATTERY);
     klj_own(obj, free);
     return (klj_val){.l = obj};
@@ -943,7 +948,15 @@ static const char *klj_uri_brief(const char *uri, char *out, size_t cap) {
     size_t al = strcspn(auth, "/?#");
     const char *host = auth;
     for (size_t i = 0; i < al; i++) if (auth[i] == '@') host = auth + i + 1;
-    size_t hl = strcspn(host, ":/?#");
+    // An IPv6 literal is "[...]" and has colons of its own: keep it whole, up
+    // to its bracket, and drop the port after it as for a name.
+    size_t hl;
+    if (*host == '[') {
+        const char *close = memchr(host, ']', al - (size_t)(host - auth));
+        hl = close ? (size_t)(close - host) + 1 : strcspn(host, "/?#");
+    } else {
+        hl = strcspn(host, ":/?#");
+    }
     snprintf(out, cap, "%.*s://%.*s", (int)sl, uri, (int)hl, host);
     return out;
 }

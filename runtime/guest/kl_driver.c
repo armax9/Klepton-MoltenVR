@@ -205,6 +205,19 @@ static void kl_driver_env_defaults(const kl_target *t) {
             setenv("KL_VK_FOZ_APP", "Source2", 0);
         }
     }
+    else if (!strcmp(t->name, "x9531494193591052")) {
+        // Ghost Town, from community PR #41 (sibest). Its Options buttons and
+        // the right-hand hold to recenter (KleptonControllers.swift), the
+        // TLSDESC relocations its Unity build carries, one audio output, the
+        // per-layer colour its fades are made of, the panels it submits apart
+        // from its eye-only EndFrame list, and panels it destroys taken down
+        // at once (klovrp_enq_retire).
+        setenv("KL_GHOSTTOWN_INPUT", "1", 0);
+        setenv("KL_ELF_TLSDESC", "1", 0);
+        setenv("KL_AUDIO_ONE_OUTPUT", "1", 0);
+        setenv("KL_GHOSTTOWN_OVERLAY_COLOR", "1", 0);
+        setenv("KL_OVRP_ENQ_OWNS_OVERLAYS", "1", 0);
+    }
     else if (!strcmp(t->name, "wrath2")) {
         // wrath2's world never appears because the GAME thread grinds through FMOD
         // Studio bank loading (UEngine::LoadMap -> LoadBanksForMap -> loadBankFile),

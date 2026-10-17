@@ -629,11 +629,15 @@ static int klvk_park_instances(void) {
         // Unity Engine Graphics API".
         // Arizona Sunshine 2 (x5245041552210029) takes the handle answer as
         // well, so the probe's device has to outlive the probe here too.
+        // Ghost Town (x9531494193591052) takes the handle answer too
+        // (klovrp_adapter_is_phys), so the probe's device has to still be the
+        // one the instance it keeps enumerates.
         on = kl_env_on("KL_VK_PARK_INSTANCE",
                        t && (strcmp(t, "walkabout") == 0 || strcmp(t, "batman") == 0 ||
                              strcmp(t, "x5269080709783454") == 0 ||
                              strcmp(t, "x3634830803298285") == 0 ||
-                             strcmp(t, "x5245041552210029") == 0));
+                             strcmp(t, "x5245041552210029") == 0 ||
+                             strcmp(t, "x9531494193591052") == 0));
     }
     return on;
 }
@@ -2662,7 +2666,13 @@ void *kl_vulkan_mtl_for_handle(unsigned long long h) {
     static int texl = -1;
     if (texl < 0) {
         const char *t = kl_driver_target_name();
-        texl = kl_env_on("KL_OVERLAY_TEXL", !(t && !strcmp(t, "x5812519008825194")));
+        // Ghost Town (x9531494193591052) takes the indirect texture pointer
+        // (klovrp_texptr_indirect), so the picture is in the layer image.
+        // Sampling texL there put AC Nexus's panels on a pooled texture Unity
+        // had already reused.
+        texl = kl_env_on("KL_OVERLAY_TEXL",
+                         !(t && (!strcmp(t, "x5812519008825194") ||
+                                 !strcmp(t, "x9531494193591052"))));
     }
     if (!texl) return NULL;
     // Only a live, tracked, non-eye image. A wild or already-destroyed handle here

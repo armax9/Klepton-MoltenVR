@@ -123,6 +123,16 @@ enum {
 };
 int kl_ovrp_pose_boundary_selftest(FILE *f, int which);
 
+// The host recentered (KleptonCompositor, after it has rebased the head and the
+// controllers): GetLocalTrackingSpaceRecenterCount moves on, for the titles
+// that read it (klovrp_recenter_count_on).
+void kl_ovrp_notify_recenter(void);
+
+// The enqueued-panel lifecycle under KL_OVRP_ENQ_RETIRE: a panel destroyed or no
+// longer submitted is taken down and cannot come back. 1 = passed. Host test
+// tests/t_ovrplayers.c; it needs KL_OVRP_ENQ_RETIRE=1 in the environment.
+int kl_ovrp_layer_lifecycle_selftest(void);
+
 // The frame clock, for a guest that owns its own frame loop — kl_openxr's
 // pacer, on the OVRPlugin side of the same question.
 //
@@ -414,6 +424,8 @@ typedef struct {
     // compositor's own default, which is what every layer filed before this
     // field existed gets.
     float eq_hscale;
+    int color_override;
+    float color_scale[4], color_offset[4];
 } kl_ovrp_overlay;
 
 // How many non-eye layers the guest submitted with its most recent frame, and

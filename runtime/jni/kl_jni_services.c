@@ -2308,13 +2308,18 @@ static const char *klj_stream_bytes(klj_stream *st) {
 // LES MILLS BODYCOMBAT (x4015163475201433, Unity 2022.3) is the same case:
 // 24k "Internal-Skinning.compute: Kernel at index (15) is invalid" in one
 // session and no gloves in a level (on device, 2026-10-15).
+// Surviving Mars: Pioneer (x9863010250399155, Unity 2022.3.62f1) too:
+// "Compute shader (Internal-Skinning): Kernel (11) size exceeds device
+// limits", then "Kernel at index (11) is invalid" every frame, and only the
+// wrist gear of the player's hands drawn (on device, 2026-10-16).
 // KL_UNITY_BOOT_EXTRA="k=v;k=v" overrides the per-target default; "" for none.
 static const char *klj_boot_config_extra(void) {
     const char *t = kl_driver_target_name();
     const char *dflt = t &&
         (strcmp(t, "x5361030930653377") == 0 ||
          strcmp(t, "x7532973430077887") == 0 ||
-         strcmp(t, "x4015163475201433") == 0)
+         strcmp(t, "x4015163475201433") == 0 ||
+         strcmp(t, "x9863010250399155") == 0)
         ? "disable-gpu-skinning=1" : "";
     return kl_env_str("KL_UNITY_BOOT_EXTRA", dflt);
 }

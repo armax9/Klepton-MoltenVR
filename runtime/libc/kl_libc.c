@@ -2843,9 +2843,13 @@ off_t  klb_lseek(int fd, off_t o, int w)   { int handled; off_t r = kl_obbmap_ls
 int    klb_close(int fd)                   { int handled; int r = kl_obbmap_close(fd, &handled);
                                              return handled ? r : close(fd); }
 // bare-name pread (libUE4 uses it): interpose the read-through window.
+// A failure publishes its errno (kl_errno_set), as read and the socket calls do.
 ssize_t klb_pread(int fd, void *buf, size_t n, off_t off) {
     int handled; ssize_t r = kl_obbmap_pread(fd, buf, n, off, &handled);
-    return handled ? r : pread(fd, buf, n, off);
+    if (handled) return r;
+    r = pread(fd, buf, n, off);
+    if (r < 0) kl_errno_set(errno);
+    return r;
 }
 // The stdio half of the same family: 32-bit Linux needed a second spelling for
 // every off_t call and bionic keeps both, while Darwin's off_t has always been

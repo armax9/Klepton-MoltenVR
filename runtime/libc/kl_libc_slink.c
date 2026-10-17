@@ -547,7 +547,9 @@ static ssize_t klb_pread_full(int fd, void *buf, size_t n, off_t off) {
         if (r > 0) { done += (size_t)r; continue; }
         if (r == 0) break;                       // EOF: a short read is the truth
         if (errno == EINTR) continue;
-        return done ? (ssize_t)done : -1;        // report the bytes that did move
+        if (done) return (ssize_t)done;          // report the bytes that did move
+        kl_errno_set(errno);                     // ...or the failure, as read does
+        return -1;
     }
     return (ssize_t)done;
 }
@@ -752,7 +754,9 @@ __attribute__((constructor)) static void kl_build_ctype(void) {
 // FORTIFY's write, the counterpart to __read_chk above.
 ssize_t klb___write_chk(int fd, const void *buf, size_t n, size_t cap) {
     if (n > cap) chk_fail("__write_chk", n, cap);
-    return write(fd, buf, n);
+    ssize_t r = write(fd, buf, n);
+    if (r < 0) kl_errno_set(errno);   // as the bare write (kl_shim_write)
+    return r;
 }
 
 // bionic's atfork registration, which libc++ and the pthread shims funnel
@@ -928,7 +932,9 @@ static int apply_linux_fd_flags(int fd, int flags) {
 }
 
 int klb_accept4(int s, struct sockaddr *addr, socklen_t *alen, int flags) {
-    return apply_linux_fd_flags(accept(s, addr, alen), flags);
+    int fd = accept(s, addr, alen);
+    if (fd < 0) { kl_errno_set(errno); return -1; }   // a non-blocking listener's EAGAIN
+    return apply_linux_fd_flags(fd, flags);
 }
 
 int klb_pipe2(int fds[2], int flags) {
