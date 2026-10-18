@@ -329,7 +329,14 @@ static int klm_extractor_enabled(void) {
         // needless decode work. Refuse that optional clip by default for this
         // title; the "Videos" setting and KL_MEDIA_EXTRACTOR=1 still turn it on.
         int shave = target && !strcmp(target, "x7532973430077887");
-        int default_on = g_video_default > 0 ? 1 : shave ? 0 : !vk;
+        // Mission: ISS opens with a 360 intro clip and its IntroScene waits for
+        // the clip's end before the main menu loads: refused, the player sees
+        // black for as long as he waits. Under Vulkan this Unity build uses
+        // BUFFER MODE (configure with no surface, NV12 bytes uploaded by the
+        // guest itself — klm_linearize below), not the AHardwareBuffer import
+        // the refusal above is about, so the clip plays as it does under GLES.
+        int iss = target && !strcmp(target, "x2094303753986147");
+        int default_on = g_video_default > 0 ? 1 : shave ? 0 : iss ? 1 : !vk;
         on = kl_env_on("KL_MEDIA_EXTRACTOR", default_on);
         if (on && vk)
             fprintf(stderr, "  [media] video is enabled for this Vulkan "
@@ -1178,7 +1185,8 @@ int kl_mediandk_texture_selftest(FILE *f) {
 // AMediaCodec
 
 #define KLM_IN_BUFFERS  8
-#define KLM_IN_CAP      (2u << 20)      // per input buffer; a 4K keyframe fits
+#define KLM_IN_CAP      (2u << 20)      // per input buffer, at least; a 4K keyframe fits
+#define KLM_IN_CAP_MAX  (64u << 20)     // ...and at most, whatever max-input-size says
 #define KLM_OUT_SLOTS   16
 
 typedef struct {
@@ -1191,7 +1199,8 @@ typedef struct {
     pthread_mutex_t lock;
     int playback_backpressure;
     unsigned n_input_waits;
-    struct { uint8_t *data; int in_use; } in[KLM_IN_BUFFERS];
+    struct { uint8_t *data; size_t cap; int in_use; } in[KLM_IN_BUFFERS];
+    size_t   in_cap;    // what getInputBuffer hands out: KLM_IN_CAP or max-input-size
     struct { void *pb; int64_t pts_us; int in_use;
              uint8_t *lin; size_t lin_cap, lin_size; } out[KLM_OUT_SLOTS];
     // Buffer mode (no output surface): the layout every `lin` above is in, and
@@ -1287,7 +1296,7 @@ static int klm_pcm_queue_input(klm_codec *c, size_t idx, off_t offset, size_t si
     int o = klm_pcm_free_slot(c);
     int result = AMEDIA_OK;
     if (o < 0) result = AMEDIA_ERROR_INVALID_OPERATION;
-    else if (size && (!p || offset < 0 || size > KLM_IN_CAP || (size_t)offset > KLM_IN_CAP - size))
+    else if (size && (!p || offset < 0 || size > c->in[idx].cap || (size_t)offset > c->in[idx].cap - size))
         result = AMEDIA_ERROR_INVALID_PARAMETER;
     else {
         if (c->pq[o].cap < size) {
@@ -1419,11 +1428,27 @@ static int klm_AMediaCodec_configure(void *codec, const void *format,
     // the two objects back up.
     klm_reader *r = kl_ndk_window_owner(window);
     c->surface = r;
+    // The guest copies a whole access unit into one input buffer and sizes its
+    // own staging from the format's max-input-size (ours says width * height).
+    // A buffer smaller than that refuses the big keyframes with
+    // INVALID_PARAMETER; every frame up to the next keyframe then decodes
+    // against a missing reference (VideoToolbox -12909) and the picture breaks
+    // into blocks. Mission: ISS's 2880x2880 intro has keyframes past 2 MB.
+    int32_t max_in = 0;
+    if (klm_AMediaFormat_getInt32((void *)format, "max-input-size", &max_in) && max_in > 0) {
+        size_t want = (size_t)max_in;
+        if (want > KLM_IN_CAP_MAX) want = KLM_IN_CAP_MAX;
+        pthread_mutex_lock(&c->lock);
+        if (want > c->in_cap) c->in_cap = want;
+        pthread_mutex_unlock(&c->lock);
+    }
     // No surface at all is BUFFER MODE: the guest will read each frame's bytes
     // (klm_linearize), so the decoder has to produce something readable.
     if (!window) kl_vtdec_want_nv12(c->dec, 1);
-    fprintf(stderr, "  [media] AMediaCodec_configure: mime=%s surface=%p flags=0x%x\n",
-            mime ? mime : "(unset)", window, flags);
+    fprintf(stderr, "  [media] AMediaCodec_configure: mime=%s surface=%p flags=0x%x, "
+                    "input buffers %zu bytes\n",
+            mime ? mime : "(unset)", window, flags,
+            c->in_cap > KLM_IN_CAP ? c->in_cap : (size_t)KLM_IN_CAP);
     if (window && !r)
         fprintf(stderr, "  [media]   ...that window is not an AImageReader's; "
                         "rendered frames will have nowhere to go\n");
@@ -1538,10 +1563,16 @@ static uint8_t *klm_AMediaCodec_getInputBuffer(void *codec, size_t idx,
     klm_codec *c = codec;
     if (!c || c->magic != KLM_CODEC_MAGIC || idx >= KLM_IN_BUFFERS) return NULL;
     pthread_mutex_lock(&c->lock);
-    if (!c->in[idx].data) c->in[idx].data = malloc(KLM_IN_CAP);
+    size_t want = c->in_cap > KLM_IN_CAP ? c->in_cap : KLM_IN_CAP;
+    if (!c->in[idx].data || c->in[idx].cap < want) {
+        free(c->in[idx].data);
+        c->in[idx].data = malloc(want);
+        c->in[idx].cap = c->in[idx].data ? want : 0;
+    }
     uint8_t *p = c->in[idx].data;
+    size_t cap = c->in[idx].cap;
     pthread_mutex_unlock(&c->lock);
-    if (out_size) *out_size = p ? KLM_IN_CAP : 0;
+    if (out_size) *out_size = p ? cap : 0;
     return p;
 }
 
@@ -1640,7 +1671,11 @@ static int klm_AMediaCodec_queueInputBuffer(void *codec, size_t idx, off_t offse
     pthread_mutex_unlock(&c->lock);
     int result=AMEDIA_OK;
     if(!p) result=AMEDIA_ERROR_UNKNOWN;
-    else if(offset<0 || size>KLM_IN_CAP || (size_t)offset>KLM_IN_CAP-size) result=AMEDIA_ERROR_INVALID_PARAMETER;
+    else if(offset<0 || size>c->in[idx].cap || (size_t)offset>c->in[idx].cap-size) {
+        result=AMEDIA_ERROR_INVALID_PARAMETER;
+        KLM_FIRST(said_in_big,"access unit of %zu bytes refused: the input buffer holds %zu "
+                  "(max-input-size %zu)\n",size,c->in[idx].cap,c->in_cap);
+    }
     else if(flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) kl_vtdec_finish(c->dec);
     else {
         if(!size) result=(flags & AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG) ? AMEDIA_OK : AMEDIA_ERROR_INVALID_PARAMETER;
