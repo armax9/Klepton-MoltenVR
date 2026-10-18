@@ -1229,6 +1229,73 @@ static klj_val klj_GA_getAppPackageName(void *env, void *self, const klj_val *a,
 // VR mode <meta-data> key. Answered by asking those two, not by a constant —
 // the manifest declares the category, so a match is the truth (see "Settled
 // decisions"), and a guest told otherwise disables the whole path under test.
+// GameActivity.playVideo(String path, Surface) — an Unreal title's own Java
+// video player (ExoPlayer) run into the Surface of an Equirect layer
+// (kl_ovrp.c, GetLayerAndroidSurfaceObject). Medal of Honor: Above and Beyond
+// plays its 360 gallery films this way. There is no ExoPlayer here; the path
+// is resolved to a host file and handed to the compositor's loading skybox,
+// which plays it on that layer (kl_loadingvideo_set_source). The Java side
+// takes "file://…", a bare path, or "jar:file:<container>!/<entry>" for a
+// video inside the APK or an OBB; the last is served when the entry is stored
+// plainly in the OBB the read-through knows, and is copied out once.
+static void klj_GA_video_resolve(const char *what, char *out, size_t cap) {
+    out[0] = 0;
+    if (!what || !*what) return;
+    const char *p = what;
+    if (strncmp(p, "file://", 7) == 0) p += 7;
+    char kp[1024], host[1024];
+    if (strncmp(p, "jar:file:", 9) == 0) {
+        const char *bang = strstr(p, "!/");
+        if (!bang) return;
+        p = bang + 2;          // the entry; the read-through indexes it by name
+    }
+    const char *gp = kl_guest_path(p, kp, sizeof kp);
+    if (access(gp, R_OK) == 0) { snprintf(out, cap, "%s", gp); return; }
+    long long base = 0, size = 0;
+    if (!kl_obbmap_locate(gp, host, sizeof host, &base, &size) || size <= 0) return;
+    const char *tmp = getenv("TMPDIR");
+    const char *bn = strrchr(gp, '/');
+    char dst[1024];
+    snprintf(dst, sizeof dst, "%s/klepton-video-%s", tmp && *tmp ? tmp : "/tmp", bn ? bn + 1 : gp);
+    struct stat st;
+    if (stat(dst, &st) != 0 || st.st_size != size) {
+        FILE *in = fopen(host, "rb"), *o = in ? fopen(dst, "wb") : NULL;
+        int ok = in && o && fseeko(in, base, SEEK_SET) == 0;
+        char buf[1 << 16];
+        for (long long left = size; ok && left > 0;) {
+            size_t want = left > (long long)sizeof buf ? sizeof buf : (size_t)left;
+            size_t got = fread(buf, 1, want, in);
+            ok = got == want && fwrite(buf, 1, got, o) == got;
+            left -= (long long)got;
+        }
+        if (in) fclose(in);
+        if (o) fclose(o);
+        if (!ok) { unlink(dst); return; }
+    }
+    snprintf(out, cap, "%s", dst);
+}
+static klj_val klj_GA_playVideo(void *env, void *self, const klj_val *a, int n) {
+    (void)env; (void)self;
+    const char *what = n > 0 ? klj_str(a[0].l) : NULL;
+    char host[1024];
+    klj_GA_video_resolve(what, host, sizeof host);
+    KLJ_LOG("GameActivity.playVideo(\"%s\") -> %s", what ? what : "",
+            host[0] ? host : "not found; nothing is played");
+    kl_loadingvideo_set_source(host[0] ? host : NULL);
+    return (klj_val){.j = 0};
+}
+// initVideoPlayer() only builds the Java player; nothing to build here.
+// dispose() releases it: the video stops.
+static klj_val klj_GA_initVideoPlayer(void *env, void *self, const klj_val *a, int n) {
+    (void)env; (void)self; (void)a; (void)n;
+    return (klj_val){.j = 0};
+}
+static klj_val klj_GA_disposeVideo(void *env, void *self, const klj_val *a, int n) {
+    (void)env; (void)self; (void)a; (void)n;
+    kl_loadingvideo_set_source(NULL);
+    return (klj_val){.j = 0};
+}
+
 static klj_val klj_GA_isOculusMobile(void *env, void *self, const klj_val *a, int n) {
     void *list = klj_PM_queryIntentActivities(env, self, a, n).l;
     int vr = list && klj_List_size(env, list, NULL, 0).j > 0;
@@ -1356,11 +1423,18 @@ static long long klj_media_position(klj_media *m) {
 // thread it came from, for the first few hundred. The order of an engine's
 // calls on its player IS its playback logic, and it is not written anywhere
 // else that can be read from here.
+// A call that repeats the one before it (the position, asked every frame) is
+// said only every 120th time, so the budget lasts for the whole of a movie
+// rather than its first half second.
 static void klj_media_trace(const char *what, long long value) {
     static int on = -1;
-    static unsigned said;
+    static unsigned said, repeats;
+    static const char *last;
     if (on < 0) on = kl_env_on("KL_MP14_TRACE", 0);
     if (!on || said >= 600) return;
+    if (what == last && (++repeats % 120) != 0) return;
+    if (what != last) repeats = 0;
+    last = what;
     said++;
     uint64_t tid = 0;
     pthread_threadid_np(NULL, &tid);
@@ -1616,6 +1690,7 @@ static klj_val klj_MP14_getVideoLastFrameData(void *env, void *self,
     size_t bytes = 0;
     unsigned long long serial = 0;
     const void *px = kl_avdec_frame(m->dec, &w, &h, &bytes, &serial);
+    klj_media_trace("getVideoLastFrameData(serial)", px && bytes ? (long long)serial : -1);
     if (!px || !bytes) return (klj_val){.l = NULL};
     if (w != m->last_w || h != m->last_h) {
         m->res_changed = 1;
@@ -1645,6 +1720,7 @@ static klj_val klj_MP14_getVideoLastFrame_locked(klj_media *m, uint32_t tex);
 static klj_val klj_MP14_getVideoLastFrame(void *env, void *self, const klj_val *a, int n) {
     (void)env;
     klj_media *m = klj_media_of(self);
+    klj_media_trace("getVideoLastFrame(texture)", n > 0 ? (long long)(int32_t)a[0].j : -1);
     if (!m || !m->dec) return (klj_val){.j = 0};
     // Held until the upload below is done: kl_avdec_frame hands back the
     // decoder's own buffer, and its decode thread writes the next frame into
@@ -2134,6 +2210,10 @@ const klj_binding klj_bind_ue4[] = {
                                                 klj_GA_networkConnectionType},
     {"com/epicgames/ue4/GameActivity", "AndroidThunkJava_IsOculusMobileApplication",
      "()Z", klj_GA_isOculusMobile},
+    {"com/epicgames/ue4/GameActivity", "playVideo",
+     "(Ljava/lang/String;Landroid/view/Surface;)V", klj_GA_playVideo},
+    {"com/epicgames/ue4/GameActivity", "initVideoPlayer", "()V", klj_GA_initVideoPlayer},
+    {"com/epicgames/ue4/GameActivity", "dispose", "()V", klj_GA_disposeVideo},
     {"com/epicgames/ue4/GameActivity", "AndroidThunkJava_HasMetaDataKey",
      "(Ljava/lang/String;)Z", klj_GA_hasMetaDataKey},
     {"com/epicgames/ue4/GameActivity", "AndroidThunkJava_GetMetaDataBoolean",

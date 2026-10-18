@@ -464,6 +464,11 @@ void kl_interstitial_done(void);
 int kl_loadingvideo_active(void);
 // The guest's LoadingScreen.stopUpdatingLoadingScreen() hook - hide the skybox.
 void kl_loadingvideo_stop(void);
+// The video the guest asked to play onto that layer (an Unreal title's
+// GameActivity.playVideo), as a host path; NULL or "" clears it. The getter
+// copies it out and returns a generation that changes with every set.
+void kl_loadingvideo_set_source(const char *host_path);
+unsigned kl_loadingvideo_source(char *out, int cap);
 
 // ...and the two calls that FILE those records for a guest that does not speak
 // OVRPlugin at all.
