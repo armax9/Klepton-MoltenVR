@@ -1182,6 +1182,13 @@ STORE_DEFAULTS = {
     # left, distorted, and pink where nothing had been written (on device,
     # 2026-10-15). "foveation_reset" calls back a stored "on" once. (Fix 42.)
     "x2436558143118760": {"foveation": False, "foveation_reset": 1},
+    # Floor Plan 2 (Unity 2022.3, OVRPlugin 1.88, Vulkan). The owner's own
+    # choices in the start window, made the default when it was verified
+    # (2026-10-18): 120 Hz with a frame on every second refresh — an even 60 —
+    # and 4096 an eye (the eye cap is its row in kl_ovrp.c, klovrp_title_cap).
+    # Its physics step follows the refresh rate it is told (KL_OVRP_HZ_FOLLOW,
+    # kl_app.c, on for it by default), or what it holds shakes in the hand.
+    "x2401648309868679": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
 }
 
 
@@ -1394,6 +1401,10 @@ def resolve(name):
     # and installed copies should take the new ones: a copy drops its stored
     # resolution and Vulkan foveation level once per number (KLPictureReset).
     t.setdefault("picture_reset", 0)
+    # The start window's "Frame rate" before a player chooses one: 100 (the
+    # mixed space, every game's start) or 120 (the full space). A choice made
+    # in the start window stays; a mixed-reality game is shown mixed anyway.
+    t.setdefault("max_rate", 100)
     # How finely the compositor puts the finished picture on the display
     # (KL_CP_QUALITY): "light" 0.40, "standard" 0.52, "full" 1.0. Light for
     # everything whose picture is capped below what the display asks for even

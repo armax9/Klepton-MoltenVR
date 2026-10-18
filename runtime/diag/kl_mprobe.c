@@ -1875,6 +1875,31 @@ void kl_mprobe_tick(unsigned frame) {
             if (m_ts) { void *args[1] = { &ts }; invoke(m_ts, args, "Time.set_timeScale"); }
         }
     }
+    // KL_PROBE_TIME=1: the guest's clock as Unity keeps it — the physics step
+    // (Time.fixedDeltaTime), the frame's delta and the frame rate it asked for
+    // — every 300 frames from frame 300. For a held object that shakes while
+    // the hand holding it does not: a physics step that is not the frame's.
+    {
+        static int on = -1;
+        static const MethodInfo *m_fdt, *m_dt, *m_mdt, *m_tfr;
+        if (on < 0) on = kl_env_on("KL_PROBE_TIME", 0);
+        if (on && frame >= 300 && frame % 300 == 0 && mprobe_init()) {
+            if (!m_fdt) {
+                m_fdt = find_method("UnityEngine", "Time", "get_fixedDeltaTime", 0);
+                m_dt  = find_method("UnityEngine", "Time", "get_deltaTime", 0);
+                m_mdt = find_method("UnityEngine", "Time", "get_maximumDeltaTime", 0);
+                m_tfr = find_method("UnityEngine", "Application", "get_targetFrameRate", 0);
+            }
+            Il2CppObject *o = m_tfr ? invoke(m_tfr, NULL, "Application.targetFrameRate") : NULL;
+            fprintf(stderr, "  [mprobe f%u] time: fixedDeltaTime %.5f s (%.2f Hz), deltaTime %.5f, "
+                            "maximumDeltaTime %.4f, targetFrameRate %d\n", frame,
+                    m_fdt ? (double)invoke_float(m_fdt, NULL, "Time.fixedDeltaTime") : -1.0,
+                    m_fdt ? 1.0 / (double)invoke_float(m_fdt, NULL, "Time.fixedDeltaTime") : -1.0,
+                    m_dt ? (double)invoke_float(m_dt, NULL, "Time.deltaTime") : -1.0,
+                    m_mdt ? (double)invoke_float(m_mdt, NULL, "Time.maximumDeltaTime") : -1.0,
+                    o ? *(int32_t *)il.object_unbox(o) : -999);
+        }
+    }
     static int call_done;
     static unsigned call_from;
     if (!call_done && kl_env_str("KL_PROBE_CALL", NULL)) {

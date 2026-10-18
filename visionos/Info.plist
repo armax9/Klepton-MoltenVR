@@ -39,6 +39,8 @@
 	<string>$(KL_VK_FOVEATION_DEFAULT)</string>
 	<key>KLPictureReset</key>
 	<string>$(KL_PICTURE_RESET)</string>
+	<key>KLMaxRateDefault</key>
+	<string>$(KL_MAX_RATE_DEFAULT)</string>
 	<key>KLTestOn</key>
 	<string>$(KL_TEST_ON)</string>
 	<key>KLTestBuild</key>

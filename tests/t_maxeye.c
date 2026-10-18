@@ -25,6 +25,7 @@
 
 #define GUNCLUB "x2285803881494677"
 #define OTHER "maxeye-test-other"
+#define FLOORPLAN2 "x2401648309868679"
 
 // What the guest is told for a 4633x3717 request (the display's own size).
 static int eye(const char *target, int choice, const char *env, const char *rs, int want_w, int want_h) {
@@ -91,9 +92,11 @@ int main(void) {
     ok &= kl_ovrp_title_eye_cap(GUNCLUB) == 4000;
     ok &= kl_ovrp_title_eye_cap(OTHER) == 3072;
     ok &= kl_ovrp_title_eye_cap("cs1") == 2560;
-    printf("%s title caps by name: Gun Club 4000, cs1 2560, other 3072\n", ok ? "ok  " : "FAIL");
+    ok &= kl_ovrp_title_eye_cap(FLOORPLAN2) == 4096;
+    printf("%s title caps by name: Gun Club 4000, cs1 2560, Floor Plan 2 4096, other 3072\n", ok ? "ok  " : "FAIL");
     ok &= run("other title, default: 3072 (3072x2465)", OTHER, 0, NULL, NULL, 3072, 2465);
     ok &= run("Gun Club, default: its own 4000 (4000x3209)", GUNCLUB, 0, NULL, NULL, 4000, 3209);
+    ok &= run("Floor Plan 2, default: its own 4096 (4096x3286)", FLOORPLAN2, 0, NULL, NULL, 4096, 3286);
     ok &= run("Gun Club, chose 2560: 2560x2054", GUNCLUB, 2560, NULL, NULL, 2560, 2054);
     ok &= run("other title, chose 4608: 4608x3697", OTHER, 4608, NULL, NULL, 4608, 3697);
     ok &= run("other title, Native: the whole request (4633x3717)", OTHER, KL_OVRP_EYE_NATIVE, NULL, NULL, 4633, 3717);
