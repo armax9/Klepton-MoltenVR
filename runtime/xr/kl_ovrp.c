@@ -8002,8 +8002,60 @@ static void klovrp_record_overlays(const void *layer_submits, int count) {
 
 // ...and the same list, filed by a guest that never speaks OVRPlugin. See
 // kl_ovrp.h. One storage, one lock, one reader: a second list filled by a
-// second producer is how the two answers drift, and no process runs both.
+// second producer is how the two answers drift.
+//
+// Except that one process does run both: a Unity OpenXR guest whose
+// OVRPlugin (UnityOpenXR mode) still files OVROverlay panels through
+// ovrp_EnqueueSubmitLayer2. Meta's runtime appends those to the app's
+// xrEndFrame; here the enqueue path published them on its own and every
+// xrEndFrame then replaced them with its own quads (none). Mission: ISS's
+// training loading screen — controls card, side panels, "pull the trigger" —
+// flashed up for a fraction of a frame and was black in between. With
+// KL_OVRP_ENQ_WITH_XR (default on for Mission: ISS) the enqueue path keeps its
+// set aside and the OpenXR frame publishes its quads plus that set; the
+// enqueue set is aged on the OpenXR frame boundary (kl_ovrp_openxr_frame_end),
+// so panels the guest stops filing still come down.
+static void klovrp_overlays_publish(const kl_ovrp_overlay *v, int n);
+static int klovrp_enq_with_xr(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *t = kl_driver_target_name();
+        v = kl_env_on("KL_OVRP_ENQ_WITH_XR", t && !strcmp(t, "x2094303753986147"));
+        if (v) fprintf(stderr, "  [ovrp] enqueued panels ride on the OpenXR frame "
+                               "(KL_OVRP_ENQ_WITH_XR)\n");
+    }
+    return v;
+}
+static pthread_mutex_t g_enq_xr_mu = PTHREAD_MUTEX_INITIALIZER;
+static kl_ovrp_overlay g_enq_xr[KLOVRP_MAX_LAYERS];
+static int g_enq_xr_n;
+static volatile int g_xr_files_overlays;   // an OpenXR frame has filed its quads
 void kl_ovrp_overlays_external(const kl_ovrp_overlay *v, int n) {
+    if (!klovrp_enq_with_xr()) { klovrp_overlays_publish(v, n); return; }
+    __atomic_store_n(&g_xr_files_overlays, 1, __ATOMIC_RELAXED);
+    kl_ovrp_overlay all[KLOVRP_MAX_LAYERS];
+    int k = 0;
+    for (int i = 0; v && i < n && k < KLOVRP_MAX_LAYERS; i++) all[k++] = v[i];
+    pthread_mutex_lock(&g_enq_xr_mu);
+    for (int i = 0; i < g_enq_xr_n && k < KLOVRP_MAX_LAYERS; i++) all[k++] = g_enq_xr[i];
+    pthread_mutex_unlock(&g_enq_xr_mu);
+    klovrp_overlays_publish(all, k);
+}
+// The enqueue path's set. Without KL_OVRP_ENQ_WITH_XR, or before an OpenXR
+// frame has filed anything, it is published directly as before.
+static void klovrp_enq_publish(const kl_ovrp_overlay *v, int n) {
+    if (klovrp_enq_with_xr()) {
+        if (n > KLOVRP_MAX_LAYERS) n = KLOVRP_MAX_LAYERS;
+        if (n < 0 || !v) n = 0;
+        pthread_mutex_lock(&g_enq_xr_mu);
+        if (n) memcpy(g_enq_xr, v, (size_t)n * sizeof *v);
+        g_enq_xr_n = n;
+        pthread_mutex_unlock(&g_enq_xr_mu);
+        if (__atomic_load_n(&g_xr_files_overlays, __ATOMIC_RELAXED)) return;
+    }
+    klovrp_overlays_publish(v, n);
+}
+static void klovrp_overlays_publish(const kl_ovrp_overlay *v, int n) {
     if (n < 0) n = 0;
     if (n > KLOVRP_MAX_LAYERS) {
         static int said;
@@ -8230,6 +8282,9 @@ static void klovrp_pt_resumed(int layer_id) {
 // one keeps its eye alpha as it was.
 void kl_ovrp_openxr_frame_end(void) {
     extern void kl_reproject_set_eye_alpha(int mode);
+    // Enqueued panels riding on OpenXR frames age on this boundary — see
+    // kl_ovrp_overlays_external.
+    if (klovrp_enq_with_xr()) klovrp_enq_age();
     if (!klovrp_pt_on() || g_pt_enq_since >= 1000000u) return;
     g_pt_enq_since++;
     int enqueued = g_pt_enq_since <= 3;
@@ -9675,7 +9730,7 @@ static pthread_mutex_t g_enq_pub_mu = PTHREAD_MUTEX_INITIALIZER;
 static void klovrp_enq_flush(void) {
     // An EMPTY set is published too: a frame in which every panel was hidden
     // has to take the previous frame's panels down, not leave them standing.
-    kl_ovrp_overlays_external(g_enq, g_enq_n);
+    klovrp_enq_publish(g_enq, g_enq_n);
     pthread_mutex_lock(&g_enq_pub_mu);
     g_enq_pub_n = 0;
     for (int i = 0; i < g_enq_n; i++) {
@@ -9717,7 +9772,7 @@ static void klovrp_enq_age(void) {
     pthread_mutex_unlock(&g_enq_pub_mu);
     if (had) {
         if (!retire) g_enq_n = 0;
-        kl_ovrp_overlays_external(g_enq, 0);
+        klovrp_enq_publish(g_enq, 0);
     }
     pthread_mutex_unlock(&g_enq_mu);
     if (!had) return;
