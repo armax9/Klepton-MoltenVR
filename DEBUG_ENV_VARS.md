@@ -1942,9 +1942,14 @@ puts the camera on the ground with its hands underneath it.
   - **unset (default)** — decide from `kl_vulkan_guest_active()`.
   - **`=1`** — never clear, whatever the RHI.
   - **`=0`** — always clear, Vulkan included.
-- `AndroidThunkJava_ForceQuit()` is logged with the guest's call stack and not
-  obeyed in this fork; the bounded quit that came with the surface around it
-  (`KL_UE4_FORCE_QUIT`, `KL_UE4_QUIT_LIMIT`, `KL_UE4_QUIT_TRACE`) is not taken.
+- `AndroidThunkJava_ForceQuit()` is logged with the guest's call stack, and by
+  default not obeyed: for most titles it is a bail worth staying alive for.
+  `KL_UE4_FORCE_QUIT=1` obeys it as the Quest does — the pump ends and the app
+  leaves as for a game's own quit. On by default for Medal of Honor
+  (`x3647259232032222`), whose Quit button ends in it once
+  `moh-exit-no-rhi-teardown` lets `FEngineLoop::Exit` through. The bounded quit
+  that came with the surface around it (`KL_UE4_QUIT_LIMIT`,
+  `KL_UE4_QUIT_TRACE`) is not taken.
 - `KL_UE4_WAIT=<seconds>` — the pump budget for a NativeActivity guest, default
   5. There is no frame count on this door: the guest owns its own game thread
   and its own frame loop, so seconds are the only unit. **RE4 needs 300** — its
@@ -3320,6 +3325,11 @@ vendored the whole path refuses by name and none of these do anything.
   "drawn but stale".
 - `KL_VK_OUT_EVERY=N` — capture every Nth frame (default 1). A full eye pair is
   ~21 MB of readback, so 1 is only for short runs.
+- `KL_VK_EYE_CLEAR=0` — leave a freshly allocated Vulkan eye image as Metal hands
+  it over. Default on: every new eye image is cleared to transparent black first,
+  because an uncleared one shows whatever its memory held (old frames, different
+  per eye) until the guest draws into it — Medal of Honor's smaller eye while a
+  level loads.
 - `KL_VK_EYE_TINT=1` — pre-clear every eye image before the guest ever sees it:
   **GREEN for eye 0 and BLUE for eye 1**. Two A/Bs in one. It separates the two
   ways an eye texture comes back wrong, which are otherwise identical in the
