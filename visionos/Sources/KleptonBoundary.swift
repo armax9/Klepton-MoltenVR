@@ -151,6 +151,7 @@ final class KLBoundary {
             NSLog("[room] play area: the room's anchor is %.2f m above this space's floor — put on the floor", m.columns.3.y)
         }
         m.columns.3.y = 0
+        handRoomToGame(room, rawFromRoom: m)
         if var cur = current, cur.room.id == roomID {
             cur.rawFromRoom = m
             lock.lock(); active = cur; lock.unlock()
@@ -164,6 +165,65 @@ final class KLBoundary {
         active = Active(room: room, rawFromRoom: m, sdf: sdf, wallVerts: buf, wallCount: count)
         lock.unlock()
         NSLog("[room] play area: in room %@ (%.1f m², %d wall vertices)", roomID.uuidString, room.areaM2, count)
+    }
+
+    /// The measured room for a game that asks for one (kl_ovrp's emulated room —
+    /// Synth Riders in mixed reality draws on its walls): the scan's wall planes
+    /// and play area fitted to one closed box (kl_room_box_from_walls), its floor,
+    /// ceiling and four walls placed in ARKit's world, where the head pose the
+    /// game gets is. A game that never asks reads none of it. Again at every
+    /// anchor update, so the walls follow when visionOS corrects where the room is.
+    private var boxOf: [UUID: kl_room_box] = [:]
+    private var handedSaid = 0
+    private func handRoomToGame(_ room: KLRoomRecord, rawFromRoom: simd_float4x4) {
+        var box = boxOf[room.id] ?? kl_room_box()
+        if boxOf[room.id] == nil {
+            let planes: [kl_room_wallplane] = room.walls.compactMap { w in
+                guard w.center.count == 3, w.normal.count == 3 else { return nil }
+                return kl_room_wallplane(cx: w.center[0], cy: w.center[1], cz: w.center[2],
+                                         nx: w.normal[0], nz: w.normal[2], width: w.width, height: w.height)
+            }
+            let mask = room.playMask()
+            let seen = planes.withUnsafeBufferPointer { p in
+                mask.withUnsafeBufferPointer { m in
+                    kl_room_box_from_walls(p.baseAddress, Int32(p.count), room.grid, m.baseAddress, &box)
+                }
+            }
+            guard seen >= 0 else {
+                NSLog("[room] scene: room %@ has neither walls nor a play area — the game gets a box round the head", room.id.uuidString)
+                return
+            }
+            boxOf[room.id] = box
+            NSLog("[room] scene: room %@ fitted to a box %.2f x %.2f m, %.2f m high, turned %.0f°, from %d of %d wall planes (sides %d %d %d %d; -1 = not seen, put 30 cm beyond the play area)",
+                  room.id.uuidString, 2 * box.half_u, 2 * box.half_v, box.height, box.yaw * 180 / .pi, Int(seen), planes.count,
+                  box.side.0, box.side.1, box.side.2, box.side.3)
+        }
+        var kinds = [Int32](repeating: 0, count: 6)
+        var m16 = [Float](repeating: 0, count: 96)
+        var ext = [Float](repeating: 0, count: 12)
+        let mf = klRoomFloats(rawFromRoom)
+        let n = withUnsafePointer(to: &box) { b in
+            mf.withUnsafeBufferPointer { m in
+                kinds.withUnsafeMutableBufferPointer { k in
+                    m16.withUnsafeMutableBufferPointer { o in
+                        ext.withUnsafeMutableBufferPointer { e in
+                            kl_room_box_planes(b, m.baseAddress, k.baseAddress, o.baseAddress, e.baseAddress)
+                        }
+                    }
+                }
+            }
+        }
+        let ik = kinds.map { Int32($0) }
+        ik.withUnsafeBufferPointer { k in
+            m16.withUnsafeBufferPointer { o in
+                ext.withUnsafeBufferPointer { e in kl_ovrp_scene_room_planes(n, k.baseAddress, o.baseAddress, e.baseAddress) }
+            }
+        }
+        if handedSaid < 3 {
+            handedSaid += 1
+            let f = SIMD3<Float>(m16[12], m16[13], m16[14])
+            NSLog("[room] scene: handed to the game, floor middle at (%.2f, %.2f, %.2f) in ARKit's world", f.x, f.y, f.z)
+        }
     }
 
     /// The edge of the area as walls 2.6 m high, in the room's frame: x, y, z and

@@ -420,6 +420,78 @@ int main(void) {
     uint16_t bad[3] = { 0, 1, 9 };
     CHECK(kl_room_mesh_tris(verts, 16, 4, bad, 2, 1, NULL, 1, 1, mv, mo, mk) == 0, "an index past the end is dropped");
 
+    // --- the room as a box, from a scan's wall planes ---
+    // A 4.2 x 3.4 m room turned by 20 degrees, middle (0.5, -0.3), 2.5 m high.
+    // Two pieces of the +u wall, a window in the -u wall (also a wall plane), the
+    // side of a wardrobe standing 0.6 m in front of the +v wall but beside the
+    // play area, and no -v wall at all. The play area: 2 x 1.6 m in the middle.
+    {
+        const float yaw = 0.349066f, mx = 0.5f, mz = -0.3f, hu = 2.1f, hv = 1.7f;
+        const float ux = cosf(yaw), uz = sinf(yaw), vx = -uz, vz = ux;
+        kl_room_wallplane w[8];
+        int nw = 0;
+#define WALL(du, dv, nu, nv, wid, hgt, y) do { \
+            w[nw].cx = mx + (du) * ux + (dv) * vx; w[nw].cz = mz + (du) * uz + (dv) * vz; w[nw].cy = (y); \
+            w[nw].nx = (nu) * ux + (nv) * vx; w[nw].nz = (nu) * uz + (nv) * vz; \
+            w[nw].width = (wid); w[nw].height = (hgt); nw++; } while (0)
+        WALL( hu, -0.8f, -1, 0, 1.4f, 2.5f, 1.25f);     // +u wall, two pieces
+        WALL( hu,  0.9f, -1, 0, 1.2f, 2.3f, 1.15f);
+        WALL(-hu,  0.0f,  1, 0, 3.0f, 2.5f, 1.25f);     // -u wall
+        WALL(-hu,  0.3f,  1, 0, 1.0f, 1.2f, 1.30f);     // the window in it
+        WALL(0.9f, hv - 0.6f, 0, -1, 0.6f, 2.0f, 1.0f); // the wardrobe's side, small
+        WALL(-0.3f, hv,  0, -1, 3.2f, 2.5f, 1.25f);     // +v wall
+#undef WALL
+        kl_room_grid bg = kl_room_grid_make(mx, mz, 3.0f, 0.05f);
+        uint8_t *pm = calloc((size_t)kl_room_cells(bg), 1);
+        float poly[8];
+        const float pu[4] = { -1.0f, 1.0f, 1.0f, -1.0f }, pv[4] = { -0.8f, -0.8f, 0.8f, 0.8f };
+        for (int k = 0; k < 4; k++) { poly[2 * k] = mx + pu[k] * ux + pv[k] * vx; poly[2 * k + 1] = mz + pu[k] * uz + pv[k] * vz; }
+        kl_room_fill_polygon(bg, pm, poly, 4, 1);
+        kl_room_box b;
+        int seen = kl_room_box_from_walls(w, nw, bg, pm, &b);
+        double dyaw = remainder((double)b.yaw - yaw, 1.5707963);
+        CHECK(seen == 3, "box: %d sides seen (want 3)", seen);
+        CHECK(fabs(dyaw) < 0.02, "box: yaw %.3f (want %.3f)", b.yaw, yaw);
+        // Taken along its own axes, which may be the room's quarter-turned.
+        int swap = fabs(remainder((double)b.yaw - yaw, 3.1415927)) > 0.7;
+        float bu = swap ? b.half_v : b.half_u, bv = swap ? b.half_u : b.half_v;
+        CHECK(fabsf(bu - hu) < 0.05f, "box: half along the long side %.2f (want %.2f)", bu, hu);
+        // -v not seen: just beyond the play area (0.8 + 0.3), the +v wall at 1.7
+        CHECK(fabsf(bv - (hv + 1.1f) / 2) < 0.06f, "box: half across %.2f (want %.2f)", bv, (hv + 1.1f) / 2);
+        CHECK(fabsf(b.height - 2.5f) < 0.01f, "box: height %.2f", b.height);
+        int wardrobe = 4;
+        for (int s = 0; s < 4; s++) CHECK(b.side[s] != wardrobe && b.side[s] != 3, "box: side %d stands on plane %d", s, b.side[s]);
+        // The planes, into a frame moved by (1, 0, 2): the floor's middle there, walls facing in.
+        float mm[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 2, 1 };
+        int32_t kinds[6];
+        float pl[96], ex[12];
+        CHECK(kl_room_box_planes(&b, mm, kinds, pl, ex) == 6, "box: six planes");
+        CHECK(kinds[0] == 0 && kinds[1] == 1 && kinds[2] == 2 && kinds[5] == 2, "box: kinds");
+        CHECK(fabsf(pl[12] - (b.cx + 1)) < 1e-5f && fabsf(pl[14] - (b.cz + 2)) < 1e-5f && fabsf(pl[9] - 1) < 1e-5f,
+              "box: floor at (%.2f %.2f), normal y %.2f", pl[12], pl[14], pl[9]);
+        CHECK(fabsf(pl[16 + 9] + 1) < 1e-5f && fabsf(pl[16 + 13] - b.height) < 1e-5f, "box: ceiling faces down at its height");
+        for (int s = 0; s < 4; s++) {
+            const float *q = pl + 16 * (2 + s);
+            // into the room: from the wall towards the floor's middle
+            float tx = (b.cx + 1) - q[12], tz = (b.cz + 2) - q[14];
+            CHECK(q[8] * tx + q[10] * tz > 0 && fabsf(q[5] - 1) < 1e-5f && fabsf(q[13] - b.height / 2) < 1e-5f,
+                  "box: wall %d faces in and stands upright", s);
+            // right-handed: X x Y = Z
+            float cx = q[1] * q[6] - q[2] * q[5], cy = q[2] * q[4] - q[0] * q[6], cz = q[0] * q[5] - q[1] * q[4];
+            CHECK(fabsf(cx - q[8]) < 1e-4f && fabsf(cy - q[9]) < 1e-4f && fabsf(cz - q[10]) < 1e-4f, "box: wall %d frame", s);
+        }
+        CHECK(fabsf(ex[0] * ex[1] - 4 * b.half_u * b.half_v) < 1e-4f, "box: floor size");
+        // No walls at all: the play area's own axes, a box just round it.
+        kl_room_box b0;
+        CHECK(kl_room_box_from_walls(w, 0, bg, pm, &b0) == 0, "box without walls: none seen");
+        CHECK(fabs(remainder((double)b0.yaw - yaw, 1.5707963)) < 0.03, "box without walls: yaw %.3f", b0.yaw);
+        CHECK(fabsf(b0.half_u * b0.half_v - 1.3f * 1.1f) < 0.08f, "box without walls: %.2f x %.2f", b0.half_u, b0.half_v);
+        CHECK(kl_room_box_from_walls(w, 0, bg, NULL, &b0) == -1, "box from nothing");
+        printf("box: yaw %.1f deg, %.2f x %.2f m, %.2f high, centre (%.2f %.2f), sides %d %d %d %d\n",
+               b.yaw * 57.29578f, 2 * b.half_u, 2 * b.half_v, b.height, b.cx, b.cz, b.side[0], b.side[1], b.side[2], b.side[3]);
+        free(pm);
+    }
+
     if (fails) { printf("t_room: %d FAILED\n", fails); return 1; }
     printf("t_room: ok (suggested %.1f m2, coverage %d%% / %d%%)\n", m2, cov, hcov);
     return 0;
