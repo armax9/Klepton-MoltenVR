@@ -1819,7 +1819,11 @@ puts the camera on the ground with its hands underneath it.
   its horizontal pixels. Renders correctly on device with it **off**
   (2026-08-13, user-confirmed), so 1 is now purely the A/B — and the answer for
   any guest ever found that collapses the cones without submitting per-eye
-  rects, which would be unservable any other way.
+  rects, which would be unservable any other way. Later defaults: on for
+  Into The Radius, Walkabout, Demeo, Ghost Town and, under the profile for
+  untested games, every Unity title shipping libOculusXRPlugin — except Angry
+  Birds VR (`x2718606324833775`), which places each eye itself and looked flat
+  with the union (2026-10-18).
 - `KL_VRR` — **foveated guest rendering** (host: `tests/t_mtl_provider.m`;
   device: `KleptonCompositor.swift`). **On by default**; `KL_VRR=0` is the A/B.
   Builds an `MTLRasterizationRateMap` for the eye size and hands it to
@@ -2114,6 +2118,17 @@ puts the camera on the ground with its hands underneath it.
   answers how often the host has recentered (the compositor's recenter, after
   it has moved the head and the controllers) instead of 0. Default 1 for
   `x9531494193591052`, else 0.
+- `KL_OVRP_BOUNDARY=0|1|<w>,<h>,<d>` — report a Guardian as set up, as on
+  every Quest: configured, a play area of the given size in metres (default
+  2.0 x 2.5 x 2.0), and a floor rectangle of that size round the tracking
+  origin as its geometry. Off, the boundary answers say "none, size 0".
+  Angry Birds VR: Isle of Pigs fits its levels to the play area. Default 1 for
+  `x2718606324833775`, else 0.
+- `KL_OVRP_NO_TRACKERS=0|1` — answer the tracker nodes 5..8 (the Rift's
+  external sensors) as a Quest does: not present, not tracked, identity at the
+  origin. Off, they report the head pose like every unmapped node. Angry Birds
+  VR: Isle of Pigs reads TrackerZero from its C#, and its island followed the
+  player. Default 1 for `x2718606324833775`, else 0.
 - `KL_OVRP_POSE_TIME=0|1` — fill `ovrpPoseStatef.Time` in
   `ovrp_GetNodePoseState` with the moment the step's sample was latched instead
   of leaving it 0. AC Nexus moves its physical hand bodies only when the

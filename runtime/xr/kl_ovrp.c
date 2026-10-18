@@ -1095,12 +1095,39 @@ static uint64_t klovrp_GetSystemMultiViewSupported(void) {
     return (uint64_t)kl_ovrp_multiview();
 }
 
+// KL_OVRP_BOUNDARY=1|<w>,<h>,<d>: tell the guest a Guardian is set up, as on
+// every Quest (a Quest cannot be used without one): configured, the given play
+// area size in metres (default 2.0 x 2.5 x 2.0), and a rectangle of that size
+// on the floor round the tracking origin as its geometry. Off, the answers say
+// "no boundary" with zero dimensions, which no Quest ever reports. Angry Birds
+// VR: Isle of Pigs fits its levels to the play area (levelScale,
+// initialPhysicalLevelScaleUp; it calls ovrp_GetBoundaryDimensions) and its
+// island did not stand in the room (2026-10-18). Default 1 for that target.
+static int klovrp_boundary(float dims[3]) {
+    static int v = -1;
+    static float d[3] = { 2.0f, 2.5f, 2.0f };
+    if (v < 0) {
+        const char *t = kl_driver_target_name();
+        const char *e = getenv("KL_OVRP_BOUNDARY");
+        float w, h, z;
+        if (e && sscanf(e, "%f,%f,%f", &w, &h, &z) == 3 && w > 0 && z > 0) {
+            d[0] = w; d[1] = h; d[2] = z; v = 1;
+        } else {
+            v = kl_env_on("KL_OVRP_BOUNDARY", t && !strcmp(t, "x2718606324833775"));
+        }
+        if (v) fprintf(stderr, "  [ovrp] Guardian: reported as set up, play area %.2f x %.2f x %.2f m "
+                               "(KL_OVRP_BOUNDARY)\n", d[0], d[1], d[2]);
+    }
+    if (v && dims) { dims[0] = d[0]; dims[1] = d[1]; dims[2] = d[2]; }
+    return v;
+}
+
 // Guardian boundary: there is no boundary system on this host, so the
 // configured flag is false — same stance as the Geometry2/Visible forms. Real
 // plugin is ovrpResult + int* out (0x171170).
 static uint64_t klovrp_GetBoundaryConfigured2(int *out) {
     ovrp_hit("ovrp_GetBoundaryConfigured2");
-    if (out) *out = 0;
+    if (out) *out = klovrp_boundary(NULL);
     return OVRP_SUCCESS;
 }
 
@@ -1134,6 +1161,26 @@ static uint64_t klovrp_GetEnvironmentDepthFrameDesc(int eye, int *desc) {
     if (desc) *desc = 0;    // ovrpEnvironmentDepthFrameDesc.IsValid = ovrpBool_False
     return OVRP_SUCCESS;
 }
+// KL_OVRP_NO_TRACKERS: answer the four tracker nodes (TrackerZero..Three,
+// 5..8 — the Rift's external sensors) the way a Quest does: not present, not
+// tracked, at the origin. They used to report the HEAD pose like every other
+// unmapped node, which tells a guest that a sensor rides on the user's head.
+// Angry Birds VR: Isle of Pigs reads TrackerZero first thing from its C#, and
+// its island followed the player instead of standing in the room — turning
+// changed the view, walking only changed the angle (2026-10-18). Per target
+// for now; nothing measured says another title reads these nodes.
+static int klovrp_no_trackers(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *t = kl_driver_target_name();
+        v = kl_env_on("KL_OVRP_NO_TRACKERS", t && !strcmp(t, "x2718606324833775"));
+        if (v) fprintf(stderr, "  [ovrp] tracker nodes 5..8: not present, at the origin "
+                               "(KL_OVRP_NO_TRACKERS)\n");
+    }
+    return v;
+}
+static int klovrp_is_tracker(int node) { return node >= 5 && node <= 8; }
+
 static uint64_t klovrp_GetNodePresent2(int node, int *out) {
     ovrp_hit("ovrp_GetNodePresent2");
     // node comes FIRST (real 0x16f450: w0 = ovrpNode, x1 = int* out) — the
@@ -1141,8 +1188,7 @@ static uint64_t klovrp_GetNodePresent2(int node, int *out) {
     // pointer. Any node a caller names is one we report; the value is written
     // for the callers that read it, since at least one (OculusSystem::
     // GetNodePresent, libOculusXRPlugin+0xf264) only checks the return.
-    (void)node;
-    if (out) *out = 1;
+    if (out) *out = !(klovrp_is_tracker(node) && klovrp_no_trackers());
     return OVRP_SUCCESS;
 }
 
@@ -1151,8 +1197,7 @@ static uint64_t klovrp_GetNodePresent2(int node, int *out) {
 // every node we report poses for.
 static uint64_t klovrp_GetNodeOrientationTracked2(int node, int *out) {
     ovrp_hit("ovrp_GetNodeOrientationTracked2");
-    (void)node;
-    if (out) *out = 1;
+    if (out) *out = !(klovrp_is_tracker(node) && klovrp_no_trackers());
     return OVRP_SUCCESS;
 }
 
@@ -1919,6 +1964,13 @@ static int klovrp_unify_default(void) {
     // the profile for untested games takes it for every Unity title that ships
     // Meta's OculusXR plugin, the one that renders with symmetric projection
     // (Catan VR, legacy VR, keeps the cones it was confirmed with).
+    // Not Angry Birds VR: Isle of Pigs (Unity 6000.0, an older OculusXR). Its
+    // plugin places each eye in the texture itself — told the real cones it
+    // makes the texture 4992 wide and puts eye1 at 991, Meta's layout, and the
+    // owner on device: "wirkt tiefer und steht besser im Raum". Told the union
+    // it still offset eye1 (-64 in a 3936 texture) and the picture was flat
+    // (2026-10-18).
+    if (t && strcmp(t, "x2718606324833775") == 0) return 0;
     extern int kl_untested_profile(void);
     extern kl_guest_kind kl_driver_kind(void);
     if (kl_untested_profile() && kl_driver_kind() == KL_GUEST_UNITY) {
@@ -2545,7 +2597,7 @@ static uint64_t klovrp_GetTrackingTransformRelativePose(float *out, int origin) 
 static uint64_t node_tracked(const char *name, int n, uint32_t *out) {
     ovrp_hit(name);
     ovrp_log_arg(name, n, __builtin_return_address(0));
-    *out = 1;
+    *out = !(klovrp_is_tracker(n) && klovrp_no_trackers());
     return OVRP_SUCCESS;
 }
 static uint64_t klovrp_GetNodePositionTracked2(int n, uint32_t *o) {
@@ -3602,8 +3654,8 @@ void kl_ovrp_set_head_pose(float px, float py, float pz,
                     * (180.0f/3.14159265358979f);
         float pitch = asinf(2.0f*(qw*qx - qy*qz)) * (180.0f/3.14159265358979f);
         fprintf(stderr, "  [ovrp] head Y=%.3f yaw=%.1f pitch=%.1f  origin=%d "
-                        "(0=eye,1=floor,2=stage) eye_height=%.3f\n",
-                py, yaw, pitch, kl_ovrp_tracking_origin(), kl_ovrp_eye_height());
+                        "(0=eye,1=floor,2=stage) eye_height=%.3f  x=%.3f z=%.3f\n",
+                py, yaw, pitch, kl_ovrp_tracking_origin(), kl_ovrp_eye_height(), px, pz);
         n++;
     } else n++; }
 }
@@ -5518,6 +5570,10 @@ uint64_t klovrp_GetNodePoseState_impl(int step, int node, void *out) {
             }
         }
         p = &hand;
+    } else if (klovrp_is_tracker(node) && klovrp_no_trackers()) {
+        // A Quest has no tracker here: identity at the origin, not moving.
+        static const klovrp_pose none = { 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0 };
+        p = &none;
     }
     float *f = out;
     f[0] = p->qx; f[1] = p->qy;      // quat xyz at +0x00
@@ -5950,6 +6006,12 @@ int kl_ovrp_pose_boundary_selftest(FILE *f, int which) {
 typedef struct { float x, y, z; } klovrp_vec3;
 static klovrp_vec3 klovrp_GetBoundaryDimensions(void) {
     ovrp_hit("ovrp_GetBoundaryDimensions");
+    float d[3];
+    if (klovrp_boundary(d)) {
+        static int said;
+        if (!said++) fprintf(stderr, "  [ovrp] ovrp_GetBoundaryDimensions asked (KL_OVRP_BOUNDARY)\n");
+        return (klovrp_vec3){d[0], d[1], d[2]};
+    }
     return (klovrp_vec3){0, 0, 0};
 }
 
@@ -11631,10 +11693,47 @@ static uint64_t klovrp_GetHeadPoseModifier(float *rot, float *pos) {
 // Real 0x171a60 / 0x171b00, out-pointer in x1 / x0.
 static uint64_t klovrp_GetBoundaryDimensions2(int type, float *out) {
     ovrp_hit("ovrp_GetBoundaryDimensions2");
-    (void)type;
     if (!out) return OVRP_FAIL_INVALID_PARAM;
     out[0] = out[1] = out[2] = 0.0f;
+    if (klovrp_boundary(out)) {
+        static int said;
+        if (!said++) fprintf(stderr, "  [ovrp] ovrp_GetBoundaryDimensions2(type 0x%x) asked (KL_OVRP_BOUNDARY)\n", type);
+    }
     return OVRP_SUCCESS;
+}
+
+// Under KL_OVRP_BOUNDARY only (kl_ovrp_gated_out): the v1 configured flag and
+// the geometry, a rectangle of the play area on the floor round the origin.
+// Geometry2/3 share one shape — (type, ovrpVector3f *points, int *count) — and
+// are called twice, first with no buffer for the count. 2 returns ovrpBool, 3
+// ovrpResult.
+static uint64_t klovrp_GetBoundaryConfigured(void) {
+    ovrp_hit("ovrp_GetBoundaryConfigured");
+    return (uint64_t)klovrp_boundary(NULL);
+}
+static int klovrp_boundary_rect(int type, float *pts, int *count, const char *name) {
+    float d[3];
+    if (!count || !klovrp_boundary(d)) return 0;
+    static int said;
+    if (!said++) fprintf(stderr, "  [ovrp] %s(type 0x%x) asked (KL_OVRP_BOUNDARY)\n", name, type);
+    float hx = d[0] * 0.5f, hz = d[2] * 0.5f, y = -klovrp_origin_y();
+    const float r[4][3] = { { -hx, y, -hz }, { hx, y, -hz }, { hx, y, hz }, { -hx, y, hz } };
+    if (pts) {
+        int n = *count < 4 ? *count : 4;
+        for (int i = 0; i < n; i++) { pts[3*i] = r[i][0]; pts[3*i+1] = r[i][1]; pts[3*i+2] = r[i][2]; }
+    }
+    *count = 4;
+    return 1;
+}
+static uint64_t klovrp_GetBoundaryGeometry2(int type, float *pts, int *count) {
+    ovrp_hit("ovrp_GetBoundaryGeometry2");
+    return (uint64_t)klovrp_boundary_rect(type, pts, count, "ovrp_GetBoundaryGeometry2");
+}
+static uint64_t klovrp_GetBoundaryGeometry3(int type, float *pts, int *count) {
+    ovrp_hit("ovrp_GetBoundaryGeometry3");
+    if (!count) return OVRP_FAIL_INVALID_PARAM;
+    return klovrp_boundary_rect(type, pts, count, "ovrp_GetBoundaryGeometry3")
+           ? OVRP_SUCCESS : (uint64_t)(int64_t)OVRP_FAIL_OPERATION;
 }
 
 static uint64_t klovrp_GetBoundaryVisible2(int *out) {
@@ -11669,6 +11768,9 @@ static const struct { const char *name; void *fn; } g_ovrp_impl[] = {
     {"ovrp_GetBodyTrackingCalibrationStatus", (void *)klovrp_body_unsupported},
     {"ovrp_GetBodyTrackingFidelityStatus", (void *)klovrp_body_unsupported},
     {"ovrp_GetBoundaryDimensions2", (void *)klovrp_GetBoundaryDimensions2},
+    {"ovrp_GetBoundaryConfigured", (void *)klovrp_GetBoundaryConfigured},
+    {"ovrp_GetBoundaryGeometry2", (void *)klovrp_GetBoundaryGeometry2},
+    {"ovrp_GetBoundaryGeometry3", (void *)klovrp_GetBoundaryGeometry3},
     {"ovrp_GetBoundaryVisible2", (void *)klovrp_GetBoundaryVisible2},
     {"ovrp_GetConnectedControllers2", (void *)klovrp_GetConnectedControllers2},
     {"ovrp_GetConnectedControllers", (void *)klovrp_GetConnectedControllers},
@@ -12518,7 +12620,13 @@ static const char *const g_ovrp_absent[] = {
 // other target resolves these names as before: the named stub, which aborts
 // with the name (or says UNSUPPORTED under KL_OVRP_UNANSWERED).
 //   ovrp_GetTrackingCalibratedOrigin — Onward (x2677344882310094), fix 50
+//   ovrp_GetBoundaryConfigured/Geometry2/Geometry3 — KL_OVRP_BOUNDARY
 static int kl_ovrp_gated_out(const char *name) {
+    // The Guardian under KL_OVRP_BOUNDARY: off, these keep their old answers
+    // from the name lists below ("no boundary").
+    if (!strcmp(name, "ovrp_GetBoundaryConfigured") || !strcmp(name, "ovrp_GetBoundaryGeometry2") ||
+        !strcmp(name, "ovrp_GetBoundaryGeometry3"))
+        return !klovrp_boundary(NULL);
     if (strcmp(name, "ovrp_GetTrackingCalibratedOrigin") == 0) {
         const char *t = kl_driver_target_name();
         return !t || strcmp(t, "x2677344882310094") != 0;
