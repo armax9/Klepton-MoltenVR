@@ -1677,6 +1677,10 @@ static int klovrp_title_cap(const char *t) {
         // first run that started, 2026-10-18, chose 4000 in the start window
         // and asked for it as the default.
         if (t && strcmp(t, "x3647259232032222") == 0) cap_dflt = 4000;
+        // Forest - Oniri tech demo: its owner asked for no limit as the
+        // default, 2026-10-18, when it was verified. 0 is no cap, the same as
+        // "Native" in the start window: the whole size the display asks for.
+        if (t && strcmp(t, "x7611090302277055") == 0) cap_dflt = 0;
         // Batman: Arkham Shadow: 4608, the eye size rebelancap runs it at with
         // foveation "high" (kl_fove) — see the note on its row in
         // visionos/targets.py. Unfoveated he measured 4032 as its rung and 5120

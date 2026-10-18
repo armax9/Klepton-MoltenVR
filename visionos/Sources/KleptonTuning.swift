@@ -527,7 +527,7 @@ final class KleptonRendering: ObservableObject {
         let envEyeMax = ProcessInfo.processInfo.environment["KL_OVRP_EYE_MAX"]
         NSLog("[cp] max resolution per eye: "
               + (eyeMax == KleptonEyeMax.byTitle ? "the game's own" : eyeMax == KleptonEyeMax.native ? "native" : "\(eyeMax)")
-              + " (the game's own \(kl_ovrp_title_eye_cap(klTargetName())))"
+              + " (the game's own " + { $0 > 0 ? "\($0)" : "no limit" }(Int(kl_ovrp_title_eye_cap(klTargetName()))) + ")"
               + (envEyeMax.map { " — overridden by KL_OVRP_EYE_MAX=\($0)" } ?? ""))
         kl_mediandk_set_video_default(video ? 1 : -1)
         NSLog("[cp] in-game video: \(video ? "on" : "runtime default") (target default \(Self.targetVideo ? "on" : "off"))")
@@ -891,6 +891,7 @@ struct EyeMaxView: View {
 
     private func label(_ v: Int) -> String {
         switch v {
+        case KleptonEyeMax.byTitle where titleCap <= 0: return klT("Default (no limit)", "Standard (keine Grenze)")
         case KleptonEyeMax.byTitle: return klT("Default (\(titleCap))", "Standard (\(titleCap))")
         case KleptonEyeMax.native: return klT("Native (no limit)", "Nativ (keine Grenze)")
         default: return "\(v)"
