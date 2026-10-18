@@ -323,6 +323,11 @@ final class KleptonRendering: ObservableObject {
     @Published var maxRate: Int {
         didSet { UserDefaults.standard.set(maxRate, forKey: Self.rateKey) }
     }
+    /// Where "Frame rate" starts before a choice is stored: the target's own
+    /// (targets.py "max_rate", KLMaxRateDefault in Info.plist), 100 for a
+    /// bundle without it.
+    static let targetMaxRate: Int =
+        (Bundle.main.object(forInfoDictionaryKey: "KLMaxRateDefault") as? String) == "120" ? 120 : 100
     /// The full space, as the person chose it. Never for a mixed-reality game.
     var wantsFullSpace: Bool { !Self.targetIsMixedReality && maxRate == 120 }
 
@@ -447,8 +452,10 @@ final class KleptonRendering: ObservableObject {
         // says otherwise.
         foveation = (UserDefaults.standard.object(forKey: Self.key) as? Bool)
             ?? Self.targetFoveation
-        // Never chosen is 100; so is anything a test build stored besides 120.
-        maxRate = (UserDefaults.standard.object(forKey: Self.rateKey) as? Int) == 120 ? 120 : 100
+        // Never chosen is the target's own (100 unless targets.py "max_rate"
+        // says 120); anything a test build stored besides 100 and 120 is 100.
+        maxRate = (UserDefaults.standard.object(forKey: Self.rateKey) as? Int)
+            .map { $0 == 120 ? 120 : 100 } ?? Self.targetMaxRate
         // Never chosen is off (see kl_glfb_multiview_ms for why).
         msaa = (UserDefaults.standard.object(forKey: Self.msaaKey) as? Int)
             .flatMap { [0, 2, 4].contains($0) ? $0 : nil } ?? 0

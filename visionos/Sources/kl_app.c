@@ -2,6 +2,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <mach/mach.h>          // task_info(TASK_VM_INFO) — the heartbeat's footprint
 #include <pthread.h>
 #include <stdio.h>
@@ -1618,6 +1619,63 @@ static int guest_pace_div(void) {
     }
     return v;
 }
+// KL_OVRP_HZ_FOLLOW=1: the refresh rate the guest is told follows the rate it
+// is really given frames at, where the compositor tells it the panel's rate
+// once, as measured at boot. The two part when the system changes the app's
+// rate later (50 at boot, 60 a few seconds on, in a 120 Hz space) and when
+// KL_GUEST_PACE_DIV halves the frames — and a guest that derives its physics
+// step from the rate then steps its physics at one rate and draws at another.
+// Floor Plan 2 does exactly that: its TButt.TBSettings.SetTimestep sets
+// Time.fixedDeltaTime to 1/rate, and TBCore.FixedUpdate re-checks the rate every
+// step (ValidateTimestep). Told 49.97 and drawing 60, an object in the hand —
+// moved on the physics step — jumped back and forth against the hand, which is
+// posed every frame; let go, nothing was out of step (headset, 2026-10-18).
+// The rate is the median of the last 32 gaps between frame starts, snapped to
+// a panel rate or a half of one; a new one is told once it has held for two
+// readings a second apart. Default on for Floor Plan 2 only: elsewhere a rate
+// read once and then changed under the guest has not been tried.
+static int guest_rate_follow_on(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *t = kl_driver_target_name();
+        v = kl_env_on("KL_OVRP_HZ_FOLLOW", t && strcmp(t, "x2401648309868679") == 0);
+        if (v) fprintf(stderr, "[guest] the refresh rate told follows the frames given (KL_OVRP_HZ_FOLLOW)\n");
+    }
+    return v;
+}
+static void guest_rate_follow(uint64_t turn_ns) {   // frame thread only
+    enum { kGaps = 32 };
+    static uint32_t gaps[kGaps];
+    static unsigned at, n;
+    static uint64_t last_ns, next_ns;
+    static float pending;
+    if (!guest_rate_follow_on()) return;
+    uint64_t prev = last_ns;
+    last_ns = turn_ns;
+    if (!prev || turn_ns <= prev) return;
+    uint64_t gap = turn_ns - prev;
+    if (gap > 100000000ull) return;                 // a pause, not a rate
+    gaps[at++ % kGaps] = (uint32_t)gap;
+    if (n < kGaps) n++;
+    if (n < kGaps || turn_ns < next_ns) return;
+    next_ns = turn_ns + 1000000000ull;
+    uint32_t v[kGaps];
+    memcpy(v, gaps, sizeof v);
+    for (int i = 1; i < kGaps; i++) { uint32_t x = v[i]; int j = i; while (j > 0 && v[j - 1] > x) { v[j] = v[j - 1]; j--; } v[j] = x; }
+    float hz = 1.0e9f / (float)v[kGaps / 2];
+    static const float rates[] = { 120, 100, 96, 90, 72, 60, 50, 48, 45, 36, 30 };
+    float snap = 0;
+    for (size_t i = 0; i < sizeof rates / sizeof rates[0]; i++)
+        if (fabsf(hz - rates[i]) <= 0.03f * rates[i]) { snap = rates[i]; break; }
+    float told = kl_ovrp_display_frequency();
+    if (!snap || fabsf(snap - told) < 1.0f) { pending = 0; return; }
+    if (pending != snap) { pending = snap; return; }   // once more, a second on
+    pending = 0;
+    kl_ovrp_set_display_frequency(snap);
+    fprintf(stderr, "[guest] frames come at %.1f a second (median gap %.2f ms): the guest is told %.0f Hz, "
+                    "was %.2f (KL_OVRP_HZ_FOLLOW)\n", (double)hz, (double)v[kGaps / 2] / 1e6,
+            (double)kl_ovrp_display_frequency(), (double)told);
+}
 static void guest_pace_wait(void) {
     static uint64_t last_turn_ns;                 // the pose the last frame started on (frame thread only)
     struct timespec ts;
@@ -1636,6 +1694,7 @@ static void guest_pace_wait(void) {
         g_guest.consumed = g_guest.published;      // too soon after the last frame: let this pose go by
     }
     last_turn_ns = g_guest.published_ns;
+    guest_rate_follow(last_turn_ns);
     g_perf_frames++;
     kl_metrics_note_game_frame();
     // Coalesce, do not queue: everything published since the last frame is one
@@ -1724,6 +1783,7 @@ static void *guest_thread(void *unused) {
             g_guest.consumed = g_guest.published;  // too soon after the last frame: let this pose go by
         }
         last_turn_ns = g_guest.published_ns;
+        guest_rate_follow(last_turn_ns);
         kl_metrics_note_game_frame();
         int stop = g_guest.stop;
         // Coalesce, do not queue: take everything published since the last
