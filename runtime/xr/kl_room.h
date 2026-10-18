@@ -153,6 +153,52 @@ int32_t kl_room_mesh_tris(const void *verts, int32_t vstride, int32_t nverts,
 /// Apply `m` (column-major 4x4) to `ntris` triangles in place.
 void kl_room_transform_tris(float *xyz, int32_t ntris, const float m[16]);
 
+// --- The room as a box, for games that pin their mixed reality to the walls ----------
+//
+// A Quest's Space Setup gives a game its room: a floor whose outline closes,
+// walls standing exactly on that outline, a ceiling. What the scan here keeps
+// is less tidy — the wall planes visionOS's plane detection named (pieces of a
+// wall, the side of a wardrobe, a window) and the play area. These turn that
+// into one rectangle the walls stand on, so a game that draws on its walls
+// (Synth Riders in mixed reality) draws where the real walls are.
+
+/// One wall plane of a scan, in the room's frame (floor at y = 0): its centre,
+/// its horizontal normal into the room, its size.
+typedef struct kl_room_wallplane {
+    float cx, cy, cz;
+    float nx, nz;
+    float width, height;
+} kl_room_wallplane;
+
+/// The room fitted to the walls: a rectangle on the floor round (cx, cz) whose
+/// sides run along u = (cos yaw, sin yaw) and v = (-sin yaw, cos yaw) in x/z,
+/// half_u and half_v from the middle to a side, `height` up to the ceiling.
+/// side[k] (k: +u, -u, +v, -v) is the wall plane that side stands on, or -1
+/// where none was seen and the side was put just beyond the play area.
+typedef struct kl_room_box {
+    float cx, cz, yaw;
+    float half_u, half_v, height;
+    int32_t side[4];
+} kl_room_box;
+
+/// Fit the box. The direction is the one the wall planes agree on (each counted
+/// by its area, a quarter turn the same direction); with no wall, the play
+/// area's long axis. On each of the four sides the largest plane facing into
+/// the room that does not cut into the play area is that side's wall. `play`
+/// (one byte a cell, 1 = inside, grid `g`) may be NULL; then the walls' middle
+/// stands in for it. Returns how many sides were seen (0..4), -1 when there is
+/// neither a play area nor a wall.
+int32_t kl_room_box_from_walls(const kl_room_wallplane *walls, int32_t n, kl_room_grid g,
+                               const uint8_t *play, kl_room_box *out);
+
+/// The box as six planes in the scene convention (the plane in its local XY,
+/// +Z its normal: up for the floor, down for the ceiling, into the room for a
+/// wall), taken to another frame by `m` (column-major 4x4, room -> that frame):
+/// kinds[i] 0 floor, 1 ceiling, 2 wall; m16 16 floats a plane (column-major);
+/// ext2 its width and height. Floor, ceiling, then the walls +u, -u, +v, -v.
+/// Returns 6.
+int32_t kl_room_box_planes(const kl_room_box *b, const float m[16], int32_t *kinds, float *m16, float *ext2);
+
 /// Pack one bit a cell (byte i holds cells 8i..8i+7, low bit first), and back.
 /// `bits` holds (cells + 7) / 8 bytes.
 void kl_room_pack(int32_t ncells, const uint8_t *mask, uint8_t bit, uint8_t *bits);

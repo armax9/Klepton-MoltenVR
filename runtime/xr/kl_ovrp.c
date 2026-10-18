@@ -8424,9 +8424,39 @@ static int klr_index_of_uuid(const unsigned char u[16]) {
 // 2 wall; m the scene-convention pose (column-major 4x4: plane in local XY,
 // +Z its normal), ext its width and height.
 #define KLR_SEEN_MAX 24
-static struct { int kind; float m[16]; float w, h; } g_klr_seen[KLR_SEEN_MAX];
+struct klr_seen { int kind; float m[16]; float w, h; };
+static struct klr_seen g_klr_seen[KLR_SEEN_MAX];
 static int g_klr_seen_n;
+// The room the start window's scan measured, as the frontend placed it in this
+// world (KleptonBoundary, kl_room_box_planes): floor, ceiling and four walls
+// that close. Preferred to plane detection and to the box where it is there
+// (KL_OVRP_SCENE_MEASURED=0 leaves it out).
+static struct klr_seen g_klr_meas[KLR_SEEN_MAX];
+static int g_klr_meas_n;
 static pthread_mutex_t g_klr_seen_mu = PTHREAD_MUTEX_INITIALIZER;
+
+void kl_ovrp_scene_room_planes(int count, const int *kinds, const float *m16, const float *ext2) {
+    if (count < 0) count = 0;
+    if (count > KLR_SEEN_MAX) count = KLR_SEEN_MAX;
+    pthread_mutex_lock(&g_klr_seen_mu);
+    for (int i = 0; i < count; i++) {
+        g_klr_meas[i].kind = kinds[i];
+        memcpy(g_klr_meas[i].m, m16 + 16 * i, sizeof g_klr_meas[i].m);
+        g_klr_meas[i].w = ext2[2 * i]; g_klr_meas[i].h = ext2[2 * i + 1];
+    }
+    g_klr_meas_n = count;
+    pthread_mutex_unlock(&g_klr_seen_mu);
+    static int said;
+    if (said++ < 8) {
+        float fw = 0, fd = 0, h = 0;
+        for (int i = 0; i < count; i++) {
+            if (kinds[i] == 0) { fw = ext2[2 * i]; fd = ext2[2 * i + 1]; }
+            if (kinds[i] == 2 && ext2[2 * i + 1] > h) h = ext2[2 * i + 1];
+        }
+        fprintf(stderr, "  [ovrp] scene: the measured room is handed over — %.2f x %.2f m, %.2f m high, %d planes "
+                        "(used the next time the guest asks for rooms)\n", (double)fw, (double)fd, (double)h, count);
+    }
+}
 
 void kl_ovrp_scene_planes(int count, const int *kinds, const float *m16, const float *ext2) {
     if (count < 0) count = 0;
@@ -8470,21 +8500,26 @@ static void klr_build(void) {
     }
     const float s = 0.70710678f;
     pthread_mutex_lock(&g_klr_seen_mu);
+    // The measured room first (kl_ovrp_scene_room_planes): a closed box from
+    // the start window's scan, placed in this world. Then plane detection.
+    int measured = g_klr_meas_n > 0 && kl_env_on("KL_OVRP_SCENE_MEASURED", 1);
+    const struct klr_seen *src = measured ? g_klr_meas : g_klr_seen;
+    int src_n = measured ? g_klr_meas_n : g_klr_seen_n;
     int floor_i = -1, ceil_i = -1;
     float floor_a = 0, ceil_a = 0;
-    for (int i = 0; i < g_klr_seen_n; i++) {
-        float a = g_klr_seen[i].w * g_klr_seen[i].h;
-        if (g_klr_seen[i].kind == 0 && a > floor_a) { floor_a = a; floor_i = i; }
-        if (g_klr_seen[i].kind == 1 && a > ceil_a)  { ceil_a = a;  ceil_i = i; }
+    for (int i = 0; i < src_n; i++) {
+        float a = src[i].w * src[i].h;
+        if (src[i].kind == 0 && a > floor_a) { floor_a = a; floor_i = i; }
+        if (src[i].kind == 1 && a > ceil_a)  { ceil_a = a;  ceil_i = i; }
     }
     int n = KLR_WALL0;
     float minx = 1e9f, maxx = -1e9f, minz = 1e9f, maxz = -1e9f;
-    for (int i = 0; i < g_klr_seen_n && n < KLR_N; i++) {
-        if (g_klr_seen[i].kind != 2 || g_klr_seen[i].w * g_klr_seen[i].h < 0.3f) continue;
-        const float *m = g_klr_seen[i].m;
+    for (int i = 0; i < src_n && n < KLR_N; i++) {
+        if (src[i].kind != 2 || src[i].w * src[i].h < 0.3f) continue;
+        const float *m = src[i].m;
         klr_quat_from_m(m, &g_room.pose[n].qx, &g_room.pose[n].qy, &g_room.pose[n].qz, &g_room.pose[n].qw);
         g_room.pose[n].px = m[12]; g_room.pose[n].py = m[13]; g_room.pose[n].pz = m[14];
-        g_room.ext_x[n] = g_klr_seen[i].w; g_room.ext_y[n] = g_klr_seen[i].h;
+        g_room.ext_x[n] = src[i].w; g_room.ext_y[n] = src[i].h;
         if (m[12] < minx) minx = m[12]; if (m[12] > maxx) maxx = m[12];
         if (m[14] < minz) minz = m[14]; if (m[14] > maxz) maxz = m[14];
         n++;
@@ -8495,27 +8530,27 @@ static void klr_build(void) {
     if (walls_seen >= 2) { cx = (minx + maxx) / 2; cz = (minz + maxz) / 2; }
     float fy = 0.0f;
     if (floor_i >= 0) {
-        const float *m = g_klr_seen[floor_i].m;
+        const float *m = src[floor_i].m;
         klr_quat_from_m(m, &g_room.pose[KLR_FLOOR].qx, &g_room.pose[KLR_FLOOR].qy,
                         &g_room.pose[KLR_FLOOR].qz, &g_room.pose[KLR_FLOOR].qw);
         g_room.pose[KLR_FLOOR].px = m[12]; g_room.pose[KLR_FLOOR].py = fy = m[13]; g_room.pose[KLR_FLOOR].pz = m[14];
-        g_room.ext_x[KLR_FLOOR] = g_klr_seen[floor_i].w; g_room.ext_y[KLR_FLOOR] = g_klr_seen[floor_i].h;
+        g_room.ext_x[KLR_FLOOR] = src[floor_i].w; g_room.ext_y[KLR_FLOOR] = src[floor_i].h;
     } else {
         float w = walls_seen >= 2 ? fmaxf(maxx - minx, 1.0f) : bw, d = walls_seen >= 2 ? fmaxf(maxz - minz, 1.0f) : bd;
         g_room.pose[KLR_FLOOR] = (klr_posef){ -s, 0, 0, s, cx, 0, cz };     // +Z -> +Y
         g_room.ext_x[KLR_FLOOR] = w; g_room.ext_y[KLR_FLOOR] = d;
     }
     if (ceil_i >= 0) {
-        const float *m = g_klr_seen[ceil_i].m;
+        const float *m = src[ceil_i].m;
         klr_quat_from_m(m, &g_room.pose[KLR_CEILING].qx, &g_room.pose[KLR_CEILING].qy,
                         &g_room.pose[KLR_CEILING].qz, &g_room.pose[KLR_CEILING].qw);
         g_room.pose[KLR_CEILING].px = m[12]; g_room.pose[KLR_CEILING].py = m[13]; g_room.pose[KLR_CEILING].pz = m[14];
-        g_room.ext_x[KLR_CEILING] = g_klr_seen[ceil_i].w; g_room.ext_y[KLR_CEILING] = g_klr_seen[ceil_i].h;
+        g_room.ext_x[KLR_CEILING] = src[ceil_i].w; g_room.ext_y[KLR_CEILING] = src[ceil_i].h;
     } else {
         g_room.pose[KLR_CEILING] = (klr_posef){ s, 0, 0, s, g_room.pose[KLR_FLOOR].px, fy + bh, g_room.pose[KLR_FLOOR].pz };
         g_room.ext_x[KLR_CEILING] = g_room.ext_x[KLR_FLOOR]; g_room.ext_y[KLR_CEILING] = g_room.ext_y[KLR_FLOOR];
     }
-    int seen_n = g_klr_seen_n;
+    int seen_n = src_n;
     pthread_mutex_unlock(&g_klr_seen_mu);
     if (walls_seen == 0) {
         // The four walls of a box around the floor, normals inward.
@@ -8535,8 +8570,8 @@ static void klr_build(void) {
     g_room.n = n;
     for (int i = 0; i < KLR_N; i++) g_room.locatable_on[i] = 0;
     g_room.built = 1;
-    fprintf(stderr, "  [ovrp] scene: room from %d visionOS plane(s) — floor %s %.1f x %.1f m, ceiling %s, "
-                    "%d wall(s)%s\n", seen_n, floor_i >= 0 ? "seen" : "made",
+    fprintf(stderr, "  [ovrp] scene: room from %d %s plane(s) — floor %s %.1f x %.1f m, ceiling %s, "
+                    "%d wall(s)%s\n", seen_n, measured ? "measured-room" : "visionOS", floor_i >= 0 ? "seen" : "made",
             (double)g_room.ext_x[KLR_FLOOR], (double)g_room.ext_y[KLR_FLOOR],
             ceil_i >= 0 ? "seen" : "made", n - KLR_WALL0, walls_seen ? " seen" : " made (a box)");
 }
