@@ -802,7 +802,8 @@ float kl_ovrp_display_frequency(void);
 //.
 void kl_ovrp_set_eye_texture_size(int w, int h);
 // The cap on the longer axis a title is tuned for: 3072, or its own row in
-// kl_ovrp.c (4000 for Gun Club VR, ...). NULL asks for the running target.
+// kl_ovrp.c (4000 for Gun Club VR, ...); 0 is no cap (Forest - Oniri tech demo).
+// NULL asks for the running target.
 int kl_ovrp_title_eye_cap(const char *target);
 // "Max resolution per eye" from the start window: 0 is the title's cap, a
 // number of pixels replaces it, KL_OVRP_EYE_NATIVE takes the display's whole

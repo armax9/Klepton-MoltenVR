@@ -25,6 +25,7 @@
 
 #define GUNCLUB "x2285803881494677"
 #define OTHER "maxeye-test-other"
+#define ONIRI "x7611090302277055"
 
 // What the guest is told for a 4633x3717 request (the display's own size).
 static int eye(const char *target, int choice, const char *env, const char *rs, int want_w, int want_h) {
@@ -91,12 +92,15 @@ int main(void) {
     ok &= kl_ovrp_title_eye_cap(GUNCLUB) == 4000;
     ok &= kl_ovrp_title_eye_cap(OTHER) == 3072;
     ok &= kl_ovrp_title_eye_cap("cs1") == 2560;
-    printf("%s title caps by name: Gun Club 4000, cs1 2560, other 3072\n", ok ? "ok  " : "FAIL");
+    ok &= kl_ovrp_title_eye_cap(ONIRI) == 0;
+    printf("%s title caps by name: Gun Club 4000, cs1 2560, Forest Oniri none, other 3072\n", ok ? "ok  " : "FAIL");
     ok &= run("other title, default: 3072 (3072x2465)", OTHER, 0, NULL, NULL, 3072, 2465);
     ok &= run("Gun Club, default: its own 4000 (4000x3209)", GUNCLUB, 0, NULL, NULL, 4000, 3209);
     ok &= run("Gun Club, chose 2560: 2560x2054", GUNCLUB, 2560, NULL, NULL, 2560, 2054);
     ok &= run("other title, chose 4608: 4608x3697", OTHER, 4608, NULL, NULL, 4608, 3697);
     ok &= run("other title, Native: the whole request (4633x3717)", OTHER, KL_OVRP_EYE_NATIVE, NULL, NULL, 4633, 3717);
+    ok &= run("Forest Oniri, default: no cap, the whole request (4633x3717)", ONIRI, 0, NULL, NULL, 4633, 3717);
+    ok &= run("Forest Oniri, chose 3072: 3072x2465", ONIRI, 3072, NULL, NULL, 3072, 2465);
     ok &= run("Gun Club, chose 4608, KL_OVRP_EYE_MAX=3072: the launch line (3072x2465)", GUNCLUB, 4608, "3072", NULL, 3072, 2465);
     ok &= run("other title, Native, KL_OVRP_EYE_MAX=2048: the launch line (2048x1643)", OTHER, KL_OVRP_EYE_NATIVE, "2048", NULL, 2048, 1643);
     ok &= run("other title, chose 4000 at 80 %: 3200x2568", OTHER, 4000, NULL, "0.8", 3200, 2568);
@@ -106,6 +110,7 @@ int main(void) {
     ok &= run_desc("other title, chose 4608, scale 1.2: 4608x3698", OTHER, 4608, NULL, 1.2f, 4608, 3698);
     ok &= run_desc("other title, default, scale 1.2: its own scale on top (3686x2958)", OTHER, 0, NULL, 1.2f, 3686, 2958);
     ok &= run_desc("other title, Native, scale 1.2: uncapped (5559x4460)", OTHER, KL_OVRP_EYE_NATIVE, NULL, 1.2f, 5559, 4460);
+    ok &= run_desc("Forest Oniri, default, scale 1.2: uncapped (5559x4460)", ONIRI, 0, NULL, 1.2f, 5559, 4460);
     ok &= run_desc("Gun Club, KL_OVRP_EYE_DESC_CAP=0, scale 1.4: as before (5600x4492)", GUNCLUB, 0, "0", 1.4f, 5600, 4492);
     desc_rs = "0.8";
     ok &= run_desc("Gun Club at 80 %, scale 1.4: the cap follows Resolution (3200x2568)", GUNCLUB, 0, NULL, 1.4f, 3200, 2568);
