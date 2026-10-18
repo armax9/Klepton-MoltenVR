@@ -367,14 +367,27 @@ static klj_val klj_AudioManager_getDevices(void *env, void *self, const klj_val 
     extern const char *kl_driver_target_name(void);
     const char *target = kl_driver_target_name();
     static int one = -1;
+    // Mission: ISS (x2094303753986147) too: its Wwise output is Meta's
+    // OculusEndpointSink, which picks its default output from this list
+    // (AudioDeviceAndroid walks getDevices(GET_DEVICES_ALL) and takes the first
+    // device that is not a source). With the empty list the game was silent
+    // from the first frame — music, voices, everything — and Training, which
+    // waits for Mission Control to finish speaking, never let him move.
     if (one < 0) one = kl_env_on("KL_AUDIO_ONE_OUTPUT",
-                                 target && strcmp(target, "x2104963472963790") == 0);
+                                 target && (strcmp(target, "x2104963472963790") == 0 ||
+                                            strcmp(target, "x2094303753986147") == 0));
     if (one) {
+        // Cached, so pinned (klj_host_cache, kl_jni.c): the first caller's
+        // local frame would otherwise retire both, and every later caller got
+        // a pointer no longer recognised as an array — an EMPTY list. Unity
+        // asks first (flags 2) and Meta's Wwise sink later (flags 3), so the
+        // sink always saw nothing and failed with "OculusEndpointSink failed
+        // to get default device info".
         static void *devices;
         if (!devices) {
-            devices = klj_new_array('L', "android/media/AudioDeviceInfo", 1);
-            ((void **)klj_arr(devices)->data)[0] =
-                klj_new_object_data("android/media/AudioDeviceInfo", (void *)(intptr_t)1);
+            devices = klj_host_cache(klj_new_array('L', "android/media/AudioDeviceInfo", 1));
+            ((void **)klj_arr(devices)->data)[0] = klj_host_cache(
+                klj_new_object_data("android/media/AudioDeviceInfo", (void *)(intptr_t)1));
         }
         KLJ_LOG("AudioManager.getDevices() -> built-in speaker (one stable output)");
         return (klj_val){.l = devices};
