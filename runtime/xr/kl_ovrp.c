@@ -10106,12 +10106,16 @@ static uint64_t klovrp_GetLayerRecommendedResolution(int layer_id, ovrp_sizei *o
     // The size that is recommended is the one CalculateEyeLayerDesc gives at
     // density 1 — the eye texture size. For this title first; the others that
     // ask have been seen with the layer's size and keep it until looked at.
-    // KL_OVRP_RECO_EYE=0|1.
+    // Red Matter (x2180753588712484, the first game, the same Unreal 4.27 with
+    // the same OVRPlugin) does the same: on the headset it set up 7776x4932,
+    // grew its viewport to 6133x4930 an eye within a minute and ran at 50 Hz
+    // (2026-10-19). KL_OVRP_RECO_EYE=0|1.
     if (l && l->is_eye) {
         static int base = -1;
         if (base < 0) {
             const char *t = kl_driver_target_name();
-            base = kl_env_on("KL_OVRP_RECO_EYE", t && strcmp(t, "redmatter2") == 0);
+            base = kl_env_on("KL_OVRP_RECO_EYE", t && (strcmp(t, "redmatter2") == 0 ||
+                                                       strcmp(t, "x2180753588712484") == 0));
         }
         int w = 0, h = 0; kl_ovrp_eye_texture_size(&w, &h);
         if (base && w > 0 && h > 0 && (w < out->w || h < out->h)) {
