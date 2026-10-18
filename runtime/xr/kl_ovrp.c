@@ -1677,6 +1677,12 @@ static int klovrp_title_cap(const char *t) {
         // first run that started, 2026-10-18, chose 4000 in the start window
         // and asked for it as the default.
         if (t && strcmp(t, "x3647259232032222") == 0) cap_dflt = 4000;
+        // PowerWash Simulator VR (Unity 2020.3 on Vulkan): its owner played it
+        // at 4000 from the start window, 2026-10-19, and asked for it as the
+        // default with a frame on every second refresh (targets.py
+        // STORE_DEFAULTS). At 4608 its eye was 4512x3697 and its GPU time a
+        // frame 8 to 11 ms.
+        if (t && strcmp(t, "x3713270985434472") == 0) cap_dflt = 4000;
         // Batman: Arkham Shadow: 4608, the eye size rebelancap runs it at with
         // foveation "high" (kl_fove) — see the note on its row in
         // visionos/targets.py. Unfoveated he measured 4032 as its rung and 5120

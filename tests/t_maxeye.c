@@ -91,7 +91,8 @@ int main(void) {
     ok &= kl_ovrp_title_eye_cap(GUNCLUB) == 4000;
     ok &= kl_ovrp_title_eye_cap(OTHER) == 3072;
     ok &= kl_ovrp_title_eye_cap("cs1") == 2560;
-    printf("%s title caps by name: Gun Club 4000, cs1 2560, other 3072\n", ok ? "ok  " : "FAIL");
+    ok &= kl_ovrp_title_eye_cap("x3713270985434472") == 4000;
+    printf("%s title caps by name: Gun Club 4000, cs1 2560, PowerWash 4000, other 3072\n", ok ? "ok  " : "FAIL");
     ok &= run("other title, default: 3072 (3072x2465)", OTHER, 0, NULL, NULL, 3072, 2465);
     ok &= run("Gun Club, default: its own 4000 (4000x3209)", GUNCLUB, 0, NULL, NULL, 4000, 3209);
     ok &= run("Gun Club, chose 2560: 2560x2054", GUNCLUB, 2560, NULL, NULL, 2560, 2054);

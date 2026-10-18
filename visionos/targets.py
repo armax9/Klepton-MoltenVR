@@ -1182,6 +1182,13 @@ STORE_DEFAULTS = {
     # left, distorted, and pink where nothing had been written (on device,
     # 2026-10-15). "foveation_reset" calls back a stored "on" once. (Fix 42.)
     "x2436558143118760": {"foveation": False, "foveation_reset": 1},
+    # PowerWash Simulator VR 2.5.0 (Unity 2020.3, Vulkan). A frame on every
+    # second refresh from the start, as its owner asked when calling it
+    # verified (2026-10-19), with the eye cap of 4000 in kl_ovrp.c: an even 50
+    # of 100 rather than a game that needs 8 to 11 ms of GPU a frame landing on
+    # the next refresh or the one after. A player turns it off in the start
+    # window (Advanced > Test), and that choice stays.
+    "x3713270985434472": {"test_on": "KL_GUEST_PACE_DIV"},
 }
 
 
