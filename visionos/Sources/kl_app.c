@@ -1611,8 +1611,7 @@ static int guest_pace_div(void) {
         // Moss: every second refresh. At the display's own eye size it needs about 8 ms of GPU a frame,
         // which holds neither 120 nor 100 a second evenly; the owner runs it at an even 60 of 120
         // (headset, 2026-10-13). KL_GUEST_PACE_DIV=1 is every refresh.
-        const char *t = kl_driver_target_name();
-        v = kl_env_int("KL_GUEST_PACE_DIV", t && strcmp(t, "moss") == 0 ? 2 : 1);
+        v = kl_env_int("KL_GUEST_PACE_DIV", kl_driver_target_is_moss() ? 2 : 1);
         if (v < 1) v = 1;
         if (v > 4) v = 4;
         if (v > 1) fprintf(stderr, "[guest] paced to every %d. refresh of the panel (KL_GUEST_PACE_DIV)\n", v);

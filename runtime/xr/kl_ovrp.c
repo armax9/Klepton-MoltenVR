@@ -1570,8 +1570,7 @@ static float g_eye_rs = 1.0f;
 static int klovrp_eye_align_n(void) {
     static int n = -1;
     if (n < 0) {
-        const char *t = kl_driver_target_name();
-        n = kl_env_int("KL_OVRP_EYE_ALIGN", t && strcmp(t, "moss") == 0 ? 4 : 1);
+        n = kl_env_int("KL_OVRP_EYE_ALIGN", kl_driver_target_is_moss() ? 4 : 1);
         if (n < 1 || n > 64) n = 1;
     }
     return n;
@@ -1685,7 +1684,7 @@ static int klovrp_title_cap(const char *t) {
         // Moss: the display's own size, with foveated rendering at "high" (targets.py) and the game's own
         // 1.5x held to it (KL_OVRP_EYE_DESC_CAP). The owner's setting on the headset, 2026-10-13: "hoch ist
         // definitiv besser"; 8 ms of GPU a frame.
-        if (t && strcmp(t, "moss") == 0) cap_dflt = 4608;
+        if (kl_driver_target_is_moss()) cap_dflt = 4608;
         // Beat Saber from 1.45 on (kl_guest_beatsaber_openxr) is the same case
         // in Unity: its camera target is a 4x multisampled multiview array,
         // which is attached single-sampled here (klgl_want_msrtt in kl_egl.c),
@@ -4353,7 +4352,7 @@ static int klovrp_frame_async_title(void) {
         extern const char *kl_driver_target_name(void);
         const char *t = kl_driver_target_name();
         if (!t) return 0;               // asked before the guest is chosen: not yet known, not kept
-        on = !strcmp(t, "x6521909757843713") || !strcmp(t, "batman") || !strcmp(t, "moss");
+        on = !strcmp(t, "x6521909757843713") || !strcmp(t, "batman") || kl_driver_target_is_moss();
     }
     return on;
 }
@@ -9311,7 +9310,7 @@ void kl_ovrp_eye_desc_size(float texture_scale, int *out_w, int *out_h) {
         if (env == -2) env = getenv("KL_OVRP_EYE_DESC_CAP") ? kl_env_on("KL_OVRP_EYE_DESC_CAP", 0) : -1;
         const char *t = kl_driver_target_name();
         int on = env >= 0 ? env
-               : (t && (strcmp(t, "moss") == 0 || strcmp(t, "x2285803881494677") == 0)) || g_eye_max_choice > 0;
+               : kl_driver_target_is_moss() || (t && strcmp(t, "x2285803881494677") == 0) || g_eye_max_choice > 0;
         // No display has pushed a size in a host run, so no cap was worked out: the plain default there.
         int cap = g_eye_cap >= 0 ? g_eye_cap : kl_env_int("KL_OVRP_EYE_MAX", 3072);
         // ...times the render scale, so "Resolution" still lowers the picture: held to the plain cap, a

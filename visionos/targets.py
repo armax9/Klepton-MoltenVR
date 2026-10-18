@@ -1182,6 +1182,14 @@ STORE_DEFAULTS = {
     # left, distorted, and pink where nothing had been written (on device,
     # 2026-10-15). "foveation_reset" calls back a stored "on" once. (Fix 42.)
     "x2436558143118760": {"foveation": False, "foveation_reset": 1},
+    # Moss: Book II (Polyarc, UE 4.27.2 like Moss). Moss's picture and its
+    # shaders as the owner set them for Moss (see the moss row): foveated
+    # rendering on at "high", reset once, the passthrough hands off (the game
+    # draws its own), shaders compiled behind the picture from the start. The
+    # runtime side is kl_driver_target_is_moss. Moss's pad layout is not copied:
+    # this game's buttons are not looked at yet.
+    "x4395292760584049": {"foveation": True, "vk_foveation": "high", "picture_reset": 1,
+                          "hand_matting": False, "test_on": "KL_VK_ASYNC_PIPES"},
 }
 
 

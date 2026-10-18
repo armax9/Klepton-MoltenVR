@@ -9851,9 +9851,8 @@ static VkResult VKAPI_CALL klvk_CreateBufferView(VkDevice dev,
 static int klvk_aniso_floor(void) {
     static int v = -1;
     if (v < 0) {
-        // 16 for Moss: the owner's setting on the headset (2026-10-13). KL_VK_ANISO=0 is off.
-        const char *t = kl_driver_target_name();
-        v = kl_env_int("KL_VK_ANISO", t && strcmp(t, "moss") == 0 ? 16 : 0);
+        // 16 for Moss (and Moss: Book II): the owner's setting on the headset (2026-10-13). KL_VK_ANISO=0 is off.
+        v = kl_env_int("KL_VK_ANISO", kl_driver_target_is_moss() ? 16 : 0);
         if (v < 2) v = 0;
         if (v > 16) v = 16;
     }

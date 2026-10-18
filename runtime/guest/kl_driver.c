@@ -296,7 +296,7 @@ static void kl_driver_env_defaults(const kl_target *t) {
             setenv("KL_VK_DEVICE_INFO", "auto", 0);
         }
     }
-    else if (!strcmp(t->name, "moss")) {
+    else if (!strcmp(t->name, "moss") || !strcmp(t->name, "x4395292760584049")) {
         // "Some shader stutters, in the Steam and in the Meta version"
         // (2026-10-17). The first session of a fresh Steam copy compiled 162
         // pipelines in four minutes, 0.3-0.7 s each, at the draw that first
@@ -454,6 +454,13 @@ kl_guest_kind kl_driver_kind(void) {
 
 const char      *kl_driver_error(void)  { return g_error; }
 const char      *kl_driver_target_name(void) { return g_target ? g_target->name : NULL; }
+// Moss and Moss: Book II (x4395292760584049): one studio, one engine (UE 4.27.2,
+// Polyarc), the same device profiles and the same picture. The settings Moss was
+// tuned to on the headset hold for both; the Steam build's own ones stay Moss's.
+int kl_driver_target_is_moss(void) {
+    const char *t = g_target ? g_target->name : NULL;
+    return t && (!strcmp(t, "moss") || !strcmp(t, "x4395292760584049"));
+}
 
 // ---- The profile for untested games --------------------------------------
 //
