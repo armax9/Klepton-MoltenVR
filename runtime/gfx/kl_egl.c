@@ -632,8 +632,15 @@ static const char *klgl_identity(int renderer) {
     // visibly low resolution and is given the same identity; with it the
     // textures looked only a little sharper, but the build confirmed working
     // on device runs with it (2026-10-17).
-    if (t && (strcmp(t, "moss") == 0 || strcmp(t, "x2897337400373711") == 0 ||
-              strcmp(t, "x5190288877703616") == 0))
+    // Moss: Book II (x4395292760584049) has the same rule in its own
+    // DefaultDeviceProfiles.ini: only Oculus_Adreno6xx_Vulkan clears
+    // DisableVulkanSupport (make "Oculus", "Adreno \(TM\) 6[0-9][0-9]",
+    // Android >= 9, Vulkan available). As "Klepton GLES" it took the base
+    // Android profile and stopped at "This device does not support Vulkan"
+    // (headset log 2026-10-18); as the Quest 2's GPU it opens a Vulkan device
+    // (Mac host, the same day).
+    if (kl_driver_target_is_moss() || (t && (strcmp(t, "x2897337400373711") == 0 ||
+              strcmp(t, "x5190288877703616") == 0)))
         return renderer ? "Adreno (TM) 650" : "Qualcomm";
     // Vampire: The Masquerade - Justice asks the same string which headset it
     // is on: UJukeboxBlueprintLibrary::ResolveHMD sets Quest 1, 2 or 3 from
