@@ -1570,8 +1570,7 @@ static float g_eye_rs = 1.0f;
 static int klovrp_eye_align_n(void) {
     static int n = -1;
     if (n < 0) {
-        const char *t = kl_driver_target_name();
-        n = kl_env_int("KL_OVRP_EYE_ALIGN", t && strcmp(t, "moss") == 0 ? 4 : 1);
+        n = kl_env_int("KL_OVRP_EYE_ALIGN", kl_driver_target_is_moss() ? 4 : 1);
         if (n < 1 || n > 64) n = 1;
     }
     return n;
@@ -1677,6 +1676,20 @@ static int klovrp_title_cap(const char *t) {
         // first run that started, 2026-10-18, chose 4000 in the start window
         // and asked for it as the default.
         if (t && strcmp(t, "x3647259232032222") == 0) cap_dflt = 4000;
+        // Forest - Oniri tech demo: its owner asked for no limit as the
+        // default, 2026-10-18, when it was verified. 0 is no cap, the same as
+        // "Native" in the start window: the whole size the display asks for.
+        if (t && strcmp(t, "x7611090302277055") == 0) cap_dflt = 0;
+        // PowerWash Simulator VR (Unity 2020.3 on Vulkan): its owner played it
+        // at 4000 from the start window, 2026-10-19, and asked for it as the
+        // default with a frame on every second refresh (targets.py
+        // STORE_DEFAULTS). At 4608 its eye was 4512x3697 and its GPU time a
+        // frame 8 to 11 ms.
+        if (t && strcmp(t, "x3713270985434472") == 0) cap_dflt = 4000;
+        // Floor Plan 2 (Unity 2022.3 on Vulkan): its owner chose 4096 in the
+        // start window and asked for it as the default when it was verified,
+        // 2026-10-18 (7-8 ms of GPU a frame at 60 a second there).
+        if (t && strcmp(t, "x2401648309868679") == 0) cap_dflt = 4096;
         // Batman: Arkham Shadow: 4608, the eye size rebelancap runs it at with
         // foveation "high" (kl_fove) — see the note on its row in
         // visionos/targets.py. Unfoveated he measured 4032 as its rung and 5120
@@ -1685,7 +1698,7 @@ static int klovrp_title_cap(const char *t) {
         // Moss: the display's own size, with foveated rendering at "high" (targets.py) and the game's own
         // 1.5x held to it (KL_OVRP_EYE_DESC_CAP). The owner's setting on the headset, 2026-10-13: "hoch ist
         // definitiv besser"; 8 ms of GPU a frame.
-        if (t && strcmp(t, "moss") == 0) cap_dflt = 4608;
+        if (kl_driver_target_is_moss()) cap_dflt = 4608;
         // Beat Saber from 1.45 on (kl_guest_beatsaber_openxr) is the same case
         // in Unity: its camera target is a 4x multisampled multiview array,
         // which is attached single-sampled here (klgl_want_msrtt in kl_egl.c),
@@ -4353,7 +4366,7 @@ static int klovrp_frame_async_title(void) {
         extern const char *kl_driver_target_name(void);
         const char *t = kl_driver_target_name();
         if (!t) return 0;               // asked before the guest is chosen: not yet known, not kept
-        on = !strcmp(t, "x6521909757843713") || !strcmp(t, "batman") || !strcmp(t, "moss");
+        on = !strcmp(t, "x6521909757843713") || !strcmp(t, "batman") || kl_driver_target_is_moss();
     }
     return on;
 }
@@ -8424,9 +8437,39 @@ static int klr_index_of_uuid(const unsigned char u[16]) {
 // 2 wall; m the scene-convention pose (column-major 4x4: plane in local XY,
 // +Z its normal), ext its width and height.
 #define KLR_SEEN_MAX 24
-static struct { int kind; float m[16]; float w, h; } g_klr_seen[KLR_SEEN_MAX];
+struct klr_seen { int kind; float m[16]; float w, h; };
+static struct klr_seen g_klr_seen[KLR_SEEN_MAX];
 static int g_klr_seen_n;
+// The room the start window's scan measured, as the frontend placed it in this
+// world (KleptonBoundary, kl_room_box_planes): floor, ceiling and four walls
+// that close. Preferred to plane detection and to the box where it is there
+// (KL_OVRP_SCENE_MEASURED=0 leaves it out).
+static struct klr_seen g_klr_meas[KLR_SEEN_MAX];
+static int g_klr_meas_n;
 static pthread_mutex_t g_klr_seen_mu = PTHREAD_MUTEX_INITIALIZER;
+
+void kl_ovrp_scene_room_planes(int count, const int *kinds, const float *m16, const float *ext2) {
+    if (count < 0) count = 0;
+    if (count > KLR_SEEN_MAX) count = KLR_SEEN_MAX;
+    pthread_mutex_lock(&g_klr_seen_mu);
+    for (int i = 0; i < count; i++) {
+        g_klr_meas[i].kind = kinds[i];
+        memcpy(g_klr_meas[i].m, m16 + 16 * i, sizeof g_klr_meas[i].m);
+        g_klr_meas[i].w = ext2[2 * i]; g_klr_meas[i].h = ext2[2 * i + 1];
+    }
+    g_klr_meas_n = count;
+    pthread_mutex_unlock(&g_klr_seen_mu);
+    static int said;
+    if (said++ < 8) {
+        float fw = 0, fd = 0, h = 0;
+        for (int i = 0; i < count; i++) {
+            if (kinds[i] == 0) { fw = ext2[2 * i]; fd = ext2[2 * i + 1]; }
+            if (kinds[i] == 2 && ext2[2 * i + 1] > h) h = ext2[2 * i + 1];
+        }
+        fprintf(stderr, "  [ovrp] scene: the measured room is handed over — %.2f x %.2f m, %.2f m high, %d planes "
+                        "(used the next time the guest asks for rooms)\n", (double)fw, (double)fd, (double)h, count);
+    }
+}
 
 void kl_ovrp_scene_planes(int count, const int *kinds, const float *m16, const float *ext2) {
     if (count < 0) count = 0;
@@ -8470,21 +8513,26 @@ static void klr_build(void) {
     }
     const float s = 0.70710678f;
     pthread_mutex_lock(&g_klr_seen_mu);
+    // The measured room first (kl_ovrp_scene_room_planes): a closed box from
+    // the start window's scan, placed in this world. Then plane detection.
+    int measured = g_klr_meas_n > 0 && kl_env_on("KL_OVRP_SCENE_MEASURED", 1);
+    const struct klr_seen *src = measured ? g_klr_meas : g_klr_seen;
+    int src_n = measured ? g_klr_meas_n : g_klr_seen_n;
     int floor_i = -1, ceil_i = -1;
     float floor_a = 0, ceil_a = 0;
-    for (int i = 0; i < g_klr_seen_n; i++) {
-        float a = g_klr_seen[i].w * g_klr_seen[i].h;
-        if (g_klr_seen[i].kind == 0 && a > floor_a) { floor_a = a; floor_i = i; }
-        if (g_klr_seen[i].kind == 1 && a > ceil_a)  { ceil_a = a;  ceil_i = i; }
+    for (int i = 0; i < src_n; i++) {
+        float a = src[i].w * src[i].h;
+        if (src[i].kind == 0 && a > floor_a) { floor_a = a; floor_i = i; }
+        if (src[i].kind == 1 && a > ceil_a)  { ceil_a = a;  ceil_i = i; }
     }
     int n = KLR_WALL0;
     float minx = 1e9f, maxx = -1e9f, minz = 1e9f, maxz = -1e9f;
-    for (int i = 0; i < g_klr_seen_n && n < KLR_N; i++) {
-        if (g_klr_seen[i].kind != 2 || g_klr_seen[i].w * g_klr_seen[i].h < 0.3f) continue;
-        const float *m = g_klr_seen[i].m;
+    for (int i = 0; i < src_n && n < KLR_N; i++) {
+        if (src[i].kind != 2 || src[i].w * src[i].h < 0.3f) continue;
+        const float *m = src[i].m;
         klr_quat_from_m(m, &g_room.pose[n].qx, &g_room.pose[n].qy, &g_room.pose[n].qz, &g_room.pose[n].qw);
         g_room.pose[n].px = m[12]; g_room.pose[n].py = m[13]; g_room.pose[n].pz = m[14];
-        g_room.ext_x[n] = g_klr_seen[i].w; g_room.ext_y[n] = g_klr_seen[i].h;
+        g_room.ext_x[n] = src[i].w; g_room.ext_y[n] = src[i].h;
         if (m[12] < minx) minx = m[12]; if (m[12] > maxx) maxx = m[12];
         if (m[14] < minz) minz = m[14]; if (m[14] > maxz) maxz = m[14];
         n++;
@@ -8495,27 +8543,27 @@ static void klr_build(void) {
     if (walls_seen >= 2) { cx = (minx + maxx) / 2; cz = (minz + maxz) / 2; }
     float fy = 0.0f;
     if (floor_i >= 0) {
-        const float *m = g_klr_seen[floor_i].m;
+        const float *m = src[floor_i].m;
         klr_quat_from_m(m, &g_room.pose[KLR_FLOOR].qx, &g_room.pose[KLR_FLOOR].qy,
                         &g_room.pose[KLR_FLOOR].qz, &g_room.pose[KLR_FLOOR].qw);
         g_room.pose[KLR_FLOOR].px = m[12]; g_room.pose[KLR_FLOOR].py = fy = m[13]; g_room.pose[KLR_FLOOR].pz = m[14];
-        g_room.ext_x[KLR_FLOOR] = g_klr_seen[floor_i].w; g_room.ext_y[KLR_FLOOR] = g_klr_seen[floor_i].h;
+        g_room.ext_x[KLR_FLOOR] = src[floor_i].w; g_room.ext_y[KLR_FLOOR] = src[floor_i].h;
     } else {
         float w = walls_seen >= 2 ? fmaxf(maxx - minx, 1.0f) : bw, d = walls_seen >= 2 ? fmaxf(maxz - minz, 1.0f) : bd;
         g_room.pose[KLR_FLOOR] = (klr_posef){ -s, 0, 0, s, cx, 0, cz };     // +Z -> +Y
         g_room.ext_x[KLR_FLOOR] = w; g_room.ext_y[KLR_FLOOR] = d;
     }
     if (ceil_i >= 0) {
-        const float *m = g_klr_seen[ceil_i].m;
+        const float *m = src[ceil_i].m;
         klr_quat_from_m(m, &g_room.pose[KLR_CEILING].qx, &g_room.pose[KLR_CEILING].qy,
                         &g_room.pose[KLR_CEILING].qz, &g_room.pose[KLR_CEILING].qw);
         g_room.pose[KLR_CEILING].px = m[12]; g_room.pose[KLR_CEILING].py = m[13]; g_room.pose[KLR_CEILING].pz = m[14];
-        g_room.ext_x[KLR_CEILING] = g_klr_seen[ceil_i].w; g_room.ext_y[KLR_CEILING] = g_klr_seen[ceil_i].h;
+        g_room.ext_x[KLR_CEILING] = src[ceil_i].w; g_room.ext_y[KLR_CEILING] = src[ceil_i].h;
     } else {
         g_room.pose[KLR_CEILING] = (klr_posef){ s, 0, 0, s, g_room.pose[KLR_FLOOR].px, fy + bh, g_room.pose[KLR_FLOOR].pz };
         g_room.ext_x[KLR_CEILING] = g_room.ext_x[KLR_FLOOR]; g_room.ext_y[KLR_CEILING] = g_room.ext_y[KLR_FLOOR];
     }
-    int seen_n = g_klr_seen_n;
+    int seen_n = src_n;
     pthread_mutex_unlock(&g_klr_seen_mu);
     if (walls_seen == 0) {
         // The four walls of a box around the floor, normals inward.
@@ -8535,8 +8583,8 @@ static void klr_build(void) {
     g_room.n = n;
     for (int i = 0; i < KLR_N; i++) g_room.locatable_on[i] = 0;
     g_room.built = 1;
-    fprintf(stderr, "  [ovrp] scene: room from %d visionOS plane(s) — floor %s %.1f x %.1f m, ceiling %s, "
-                    "%d wall(s)%s\n", seen_n, floor_i >= 0 ? "seen" : "made",
+    fprintf(stderr, "  [ovrp] scene: room from %d %s plane(s) — floor %s %.1f x %.1f m, ceiling %s, "
+                    "%d wall(s)%s\n", seen_n, measured ? "measured-room" : "visionOS", floor_i >= 0 ? "seen" : "made",
             (double)g_room.ext_x[KLR_FLOOR], (double)g_room.ext_y[KLR_FLOOR],
             ceil_i >= 0 ? "seen" : "made", n - KLR_WALL0, walls_seen ? " seen" : " made (a box)");
 }
@@ -9311,7 +9359,7 @@ void kl_ovrp_eye_desc_size(float texture_scale, int *out_w, int *out_h) {
         if (env == -2) env = getenv("KL_OVRP_EYE_DESC_CAP") ? kl_env_on("KL_OVRP_EYE_DESC_CAP", 0) : -1;
         const char *t = kl_driver_target_name();
         int on = env >= 0 ? env
-               : (t && (strcmp(t, "moss") == 0 || strcmp(t, "x2285803881494677") == 0)) || g_eye_max_choice > 0;
+               : kl_driver_target_is_moss() || (t && strcmp(t, "x2285803881494677") == 0) || g_eye_max_choice > 0;
         // No display has pushed a size in a host run, so no cap was worked out: the plain default there.
         int cap = g_eye_cap >= 0 ? g_eye_cap : kl_env_int("KL_OVRP_EYE_MAX", 3072);
         // ...times the render scale, so "Resolution" still lowers the picture: held to the plain cap, a
@@ -10106,12 +10154,16 @@ static uint64_t klovrp_GetLayerRecommendedResolution(int layer_id, ovrp_sizei *o
     // The size that is recommended is the one CalculateEyeLayerDesc gives at
     // density 1 — the eye texture size. For this title first; the others that
     // ask have been seen with the layer's size and keep it until looked at.
-    // KL_OVRP_RECO_EYE=0|1.
+    // Red Matter (x2180753588712484, the first game, the same Unreal 4.27 with
+    // the same OVRPlugin) does the same: on the headset it set up 7776x4932,
+    // grew its viewport to 6133x4930 an eye within a minute and ran at 50 Hz
+    // (2026-10-19). KL_OVRP_RECO_EYE=0|1.
     if (l && l->is_eye) {
         static int base = -1;
         if (base < 0) {
             const char *t = kl_driver_target_name();
-            base = kl_env_on("KL_OVRP_RECO_EYE", t && strcmp(t, "redmatter2") == 0);
+            base = kl_env_on("KL_OVRP_RECO_EYE", t && (strcmp(t, "redmatter2") == 0 ||
+                                                       strcmp(t, "x2180753588712484") == 0));
         }
         int w = 0, h = 0; kl_ovrp_eye_texture_size(&w, &h);
         if (base && w > 0 && h > 0 && (w < out->w || h < out->h)) {

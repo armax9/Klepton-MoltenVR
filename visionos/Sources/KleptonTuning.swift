@@ -323,6 +323,11 @@ final class KleptonRendering: ObservableObject {
     @Published var maxRate: Int {
         didSet { UserDefaults.standard.set(maxRate, forKey: Self.rateKey) }
     }
+    /// Where "Frame rate" starts before a choice is stored: the target's own
+    /// (targets.py "max_rate", KLMaxRateDefault in Info.plist), 100 for a
+    /// bundle without it.
+    static let targetMaxRate: Int =
+        (Bundle.main.object(forInfoDictionaryKey: "KLMaxRateDefault") as? String) == "120" ? 120 : 100
     /// The full space, as the person chose it. Never for a mixed-reality game.
     var wantsFullSpace: Bool { !Self.targetIsMixedReality && maxRate == 120 }
 
@@ -447,8 +452,10 @@ final class KleptonRendering: ObservableObject {
         // says otherwise.
         foveation = (UserDefaults.standard.object(forKey: Self.key) as? Bool)
             ?? Self.targetFoveation
-        // Never chosen is 100; so is anything a test build stored besides 120.
-        maxRate = (UserDefaults.standard.object(forKey: Self.rateKey) as? Int) == 120 ? 120 : 100
+        // Never chosen is the target's own (100 unless targets.py "max_rate"
+        // says 120); anything a test build stored besides 100 and 120 is 100.
+        maxRate = (UserDefaults.standard.object(forKey: Self.rateKey) as? Int)
+            .map { $0 == 120 ? 120 : 100 } ?? Self.targetMaxRate
         // Never chosen is off (see kl_glfb_multiview_ms for why).
         msaa = (UserDefaults.standard.object(forKey: Self.msaaKey) as? Int)
             .flatMap { [0, 2, 4].contains($0) ? $0 : nil } ?? 0
@@ -527,7 +534,7 @@ final class KleptonRendering: ObservableObject {
         let envEyeMax = ProcessInfo.processInfo.environment["KL_OVRP_EYE_MAX"]
         NSLog("[cp] max resolution per eye: "
               + (eyeMax == KleptonEyeMax.byTitle ? "the game's own" : eyeMax == KleptonEyeMax.native ? "native" : "\(eyeMax)")
-              + " (the game's own \(kl_ovrp_title_eye_cap(klTargetName())))"
+              + " (the game's own " + { $0 > 0 ? "\($0)" : "no limit" }(Int(kl_ovrp_title_eye_cap(klTargetName()))) + ")"
               + (envEyeMax.map { " — overridden by KL_OVRP_EYE_MAX=\($0)" } ?? ""))
         kl_mediandk_set_video_default(video ? 1 : -1)
         NSLog("[cp] in-game video: \(video ? "on" : "runtime default") (target default \(Self.targetVideo ? "on" : "off"))")
@@ -891,6 +898,7 @@ struct EyeMaxView: View {
 
     private func label(_ v: Int) -> String {
         switch v {
+        case KleptonEyeMax.byTitle where titleCap <= 0: return klT("Default (no limit)", "Standard (keine Grenze)")
         case KleptonEyeMax.byTitle: return klT("Default (\(titleCap))", "Standard (\(titleCap))")
         case KleptonEyeMax.native: return klT("Native (no limit)", "Nativ (keine Grenze)")
         default: return "\(v)"

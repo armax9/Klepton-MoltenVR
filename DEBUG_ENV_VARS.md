@@ -4173,8 +4173,8 @@ Not from his fork, found on the way (2026-10-13):
 
 - `KL_OVRP_RECO_EYE=0|1` — `ovrp_GetLayerRecommendedResolution` answers the eye
   texture size at density 1 instead of the eye layer's own (largest) size.
-  **Default on for Red Matter 2**, which otherwise draws at its ceiling in every
-  frame. `runtime/xr/kl_ovrp.c`.
+  **Default on for Red Matter 2 and Red Matter** (`x2180753588712484`), which
+  otherwise draw at their ceiling in every frame. `runtime/xr/kl_ovrp.c`.
 - `KL_BUILD_MODEL=<name>` — existing override; **Red Matter 2 is told "Quest"**,
   the only Quest model name it knows.
 - `KL_OVRP_EYE_DESC_CAP=1` — the eye cap (`KL_OVRP_EYE_MAX` or the target's

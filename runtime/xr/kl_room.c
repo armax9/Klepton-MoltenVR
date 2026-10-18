@@ -934,6 +934,138 @@ void kl_room_transform_tris(float *xyz, int32_t ntris, const float m[16]) {
     }
 }
 
+// --- The room as a box --------------------------------------------------------------
+
+int32_t kl_room_box_from_walls(const kl_room_wallplane *walls, int32_t n, kl_room_grid g,
+                               const uint8_t *play, kl_room_box *out) {
+    if (!out) return -1;
+    if (n < 0) n = 0;
+    // The play area's middle and its spread, from its cells.
+    double sx = 0, sz = 0, sxx = 0, szz = 0, sxz = 0;
+    int32_t np = 0;
+    if (play) {
+        for (int32_t j = 0; j < g.h; j++)
+            for (int32_t i = 0; i < g.w; i++) {
+                if (!play[j * g.w + i]) continue;
+                double x = g.x0 + (i + 0.5) * g.cell, z = g.z0 + (j + 0.5) * g.cell;
+                sx += x; sz += z; sxx += x * x; szz += z * z; sxz += x * z; np++;
+            }
+    }
+    // Planes too small to be a wall are not counted at all.
+    double c4 = 0, s4 = 0, wx = 0, wz = 0, wa = 0;
+    for (int32_t k = 0; k < n; k++) {
+        double a = (double)walls[k].width * walls[k].height;
+        if (a < 0.3) continue;
+        double th = atan2(walls[k].nz, walls[k].nx);
+        c4 += a * cos(4 * th); s4 += a * sin(4 * th);
+        wx += a * walls[k].cx; wz += a * walls[k].cz; wa += a;
+    }
+    if (!np && wa <= 0) return -1;
+    double mx = np ? sx / np : wx / wa, mz = np ? sz / np : wz / wa;
+    double yaw;
+    if (wa > 0 && (c4 * c4 + s4 * s4) > 1e-6) {
+        yaw = atan2(s4, c4) / 4;
+    } else if (np) {
+        double vxx = sxx / np - mx * mx, vzz = szz / np - mz * mz, vxz = sxz / np - mx * mz;
+        yaw = 0.5 * atan2(2 * vxz, vxx - vzz);
+    } else {
+        yaw = 0;
+    }
+    double ux = cos(yaw), uz = sin(yaw), vx = -uz, vz = ux;
+    // How far the play area reaches on each side of its middle: +u, -u, +v, -v.
+    double reach[4] = { 0, 0, 0, 0 };
+    if (np) {
+        for (int32_t j = 0; j < g.h; j++)
+            for (int32_t i = 0; i < g.w; i++) {
+                if (!play[j * g.w + i]) continue;
+                double x = g.x0 + (i + 0.5) * g.cell - mx, z = g.z0 + (j + 0.5) * g.cell - mz;
+                double pu = x * ux + z * uz, pv = x * vx + z * vz, h = 0.5 * g.cell;
+                if (pu + h > reach[0]) reach[0] = pu + h;
+                if (-pu + h > reach[1]) reach[1] = -pu + h;
+                if (pv + h > reach[2]) reach[2] = pv + h;
+                if (-pv + h > reach[3]) reach[3] = -pv + h;
+            }
+    }
+    const double dir[4][2] = { { ux, uz }, { -ux, -uz }, { vx, vz }, { -vx, -vz } };
+    double off[4], top = 0;
+    int32_t seen = 0;
+    for (int s = 0; s < 4; s++) {
+        int32_t best = -1;
+        double best_a = 0, best_o = 0;
+        for (int32_t k = 0; k < n; k++) {
+            double a = (double)walls[k].width * walls[k].height;
+            if (a < 0.3) continue;
+            // Facing into the room from this side: its normal against the way out.
+            double nl = sqrt((double)walls[k].nx * walls[k].nx + (double)walls[k].nz * walls[k].nz);
+            if (nl < 1e-6) continue;
+            double facing = -(walls[k].nx * dir[s][0] + walls[k].nz * dir[s][1]) / nl;
+            if (facing < 0.906) continue;                       // within 25 degrees
+            double o = (walls[k].cx - mx) * dir[s][0] + (walls[k].cz - mz) * dir[s][1];
+            if (o < reach[s] - 0.15) continue;                  // it would cut into the play area
+            if (a > best_a || (a == best_a && o < best_o)) { best = k; best_a = a; best_o = o; }
+        }
+        out->side[s] = best;
+        if (best >= 0) {
+            off[s] = best_o;
+            double t = walls[best].cy + 0.5 * walls[best].height;
+            if (t > top) top = t;
+            seen++;
+        } else {
+            off[s] = reach[s] + 0.3;                            // just beyond the play area
+        }
+        if (off[s] < 0.5) off[s] = 0.5;
+    }
+    double cu = (off[0] - off[1]) / 2, cv = (off[2] - off[3]) / 2;
+    out->cx = (float)(mx + cu * ux + cv * vx);
+    out->cz = (float)(mz + cu * uz + cv * vz);
+    out->yaw = (float)yaw;
+    out->half_u = (float)((off[0] + off[1]) / 2);
+    out->half_v = (float)((off[2] + off[3]) / 2);
+    out->height = (float)(top >= 2.0 && top <= 4.0 ? top : top > 4.0 ? 4.0 : 2.6);
+    return seen;
+}
+
+// A plane frame: X and the normal Z given, Y = Z x X; position p.
+static void klr_frame(float *o, const double X[3], const double Z[3], const double p[3]) {
+    double Y[3] = { Z[1] * X[2] - Z[2] * X[1], Z[2] * X[0] - Z[0] * X[2], Z[0] * X[1] - Z[1] * X[0] };
+    const double *c[3] = { X, Y, Z };
+    for (int k = 0; k < 3; k++) { o[4 * k] = (float)c[k][0]; o[4 * k + 1] = (float)c[k][1]; o[4 * k + 2] = (float)c[k][2]; o[4 * k + 3] = 0; }
+    o[12] = (float)p[0]; o[13] = (float)p[1]; o[14] = (float)p[2]; o[15] = 1;
+}
+static void klr_mul(const float a[16], const float b[16], float o[16]) {
+    float t[16];
+    for (int c = 0; c < 4; c++)
+        for (int r = 0; r < 4; r++)
+            t[4 * c + r] = a[r] * b[4 * c] + a[4 + r] * b[4 * c + 1] + a[8 + r] * b[4 * c + 2] + a[12 + r] * b[4 * c + 3];
+    memcpy(o, t, sizeof t);
+}
+
+int32_t kl_room_box_planes(const kl_room_box *b, const float m[16], int32_t *kinds, float *m16, float *ext2) {
+    double ux = cos(b->yaw), uz = sin(b->yaw), vx = -uz, vz = ux, h = b->height;
+    double u[3] = { ux, 0, uz }, up[3] = { 0, 1, 0 }, down[3] = { 0, -1, 0 };
+    double mid[3] = { b->cx, 0, b->cz }, ceil_at[3] = { b->cx, h, b->cz };
+    float f[16];
+    klr_frame(f, u, up, mid);
+    klr_mul(m, f, m16);
+    kinds[0] = 0; ext2[0] = 2 * b->half_u; ext2[1] = 2 * b->half_v;
+    klr_frame(f, u, down, ceil_at);
+    klr_mul(m, f, m16 + 16);
+    kinds[1] = 1; ext2[2] = 2 * b->half_u; ext2[3] = 2 * b->half_v;
+    // The walls: on each side, normal pointing back into the room.
+    const double out_dir[4][2] = { { ux, uz }, { -ux, -uz }, { vx, vz }, { -vx, -vz } };
+    const double half[4] = { b->half_u, b->half_u, b->half_v, b->half_v };
+    const double along[4] = { b->half_v, b->half_v, b->half_u, b->half_u };
+    for (int s = 0; s < 4; s++) {
+        double Z[3] = { -out_dir[s][0], 0, -out_dir[s][1] };
+        double X[3] = { Z[2], 0, -Z[0] };                       // Y (up) x Z
+        double p[3] = { b->cx + half[s] * out_dir[s][0], h / 2, b->cz + half[s] * out_dir[s][1] };
+        klr_frame(f, X, Z, p);
+        klr_mul(m, f, m16 + 16 * (2 + s));
+        kinds[2 + s] = 2; ext2[2 * (2 + s)] = (float)(2 * along[s]); ext2[2 * (2 + s) + 1] = (float)h;
+    }
+    return 6;
+}
+
 // --- Storage -----------------------------------------------------------------------
 
 void kl_room_pack(int32_t ncells, const uint8_t *mask, uint8_t bit, uint8_t *bits) {
