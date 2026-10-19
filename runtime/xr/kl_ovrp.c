@@ -7278,6 +7278,34 @@ _Static_assert(offsetof(ovrp_layer_desc_eyefov, fov) == 0x20, "desc");
 _Static_assert(offsetof(ovrp_layer_desc_eyefov, visible_rect) == 0x40, "desc");
 _Static_assert(offsetof(ovrp_layer_desc_eyefov, max_viewport_size) == 0x60, "desc");
 
+// How much of that struct the GUEST'S plugin has. The three motion-vector
+// fields at +0x6c came with Application SpaceWarp: of the OVRPlugin builds in
+// the store toolchain, 1.30–1.46 carry neither ovrp_CalculateEyeLayerDesc3 nor
+// a motion-vector string, and every one from 1.51 on carries both. A game built
+// against an older plugin hands us a buffer that ends after DepthFormat, and
+// the 0x7c we wrote went past it into its stack. Vader Immortal I (OVRPlugin
+// 1.30.0, UE 4.19) keeps its world delta in d8 across
+// FOculusHMD::UpdateStereoRenderingParams, whose 0x70-byte desc sits right
+// below the saved d8: mv_depth_format = 10 landed on it, every UWorld::Tick ran
+// with a delta of 0 (clamped to 0.0005 s), and the game's 16-second intro took
+// 33,000 frames — five and a half minutes of black at 100 Hz. An unknown version
+// keeps the full struct, as before.
+static size_t klovrp_layer_desc_bytes(void) {
+    static size_t n;
+    if (!n) {
+        n = sizeof(ovrp_layer_desc_eyefov);
+        const char *v = klovrp_guest_version();
+        unsigned maj = 0, min = 0;
+        if (v && sscanf(v, "%u.%u", &maj, &min) == 2 && maj == 1 && min < 51) {
+            n = offsetof(ovrp_layer_desc_eyefov, mv_format);
+            fprintf(stderr, "  [ovrp] guest OVRPlugin %s predates the motion-vector "
+                            "fields: layer descriptions are written as %zu bytes, "
+                            "not %zu\n", v, n, sizeof(ovrp_layer_desc_eyefov));
+        }
+    }
+    return n;
+}
+
 // ovrpTextureFormat -> GL internalformat.
 //
 // The enum's ORDER is the guest's own: libOculusXRPlugin.so carries the names as
@@ -9341,7 +9369,8 @@ static void klovrp_fill_eye_desc(ovrp_layer_desc_eyefov *d, int layout,
     int w = 0, h = 0;
     kl_ovrp_eye_desc_size(texture_scale, &w, &h);
 
-    memset(d, 0, sizeof *d);
+    const size_t bytes = klovrp_layer_desc_bytes();
+    memset(d, 0, bytes);
     d->shape        = KLOVRP_SHAPE_EYEFOV;
     d->layout       = layout;
     d->texture_size = (ovrp_sizei){ w, h };
@@ -9368,6 +9397,7 @@ static void klovrp_fill_eye_desc(ovrp_layer_desc_eyefov *d, int layout,
     // motion vectors — so these describe the formats a provider would use if it
     // asked, and it does not.
     d->depth_format    = depth_format;
+    if (bytes < sizeof *d) return;            // the guest's struct ends here
     d->mv_format       = mv_format;
     d->mv_depth_format = mv_depth_format;
     // ...unless the guest asked for Application SpaceWarp and we serve it (see
@@ -9487,7 +9517,7 @@ static uint64_t klovrp_CalculateLayerDesc(int shape, int layout,
     // because a fault in our address space is reported as ours.
     if (!texture_size) return OVRP_FAIL_INVALID_PARAM;
     ovrp_sizei sz = *texture_size;
-    memset(out, 0, sizeof *out);
+    memset(out, 0, klovrp_layer_desc_bytes());
     out->shape        = shape;
     out->layout       = layout;
     out->texture_size = sz;
