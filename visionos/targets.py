@@ -1204,6 +1204,11 @@ STORE_DEFAULTS = {
     # Its physics step follows the refresh rate it is told (KL_OVRP_HZ_FOLLOW,
     # kl_app.c, on for it by default), or what it holds shakes in the hand.
     "x2401648309868679": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
+    # Star Wars Pinball VR (UE 4.25, GLES). Its owner's choices in the start
+    # window, made the default (2026-10-19): 120 Hz with a frame on every
+    # second refresh — an even 60 — and 4608 an eye (klovrp_title_cap in
+    # kl_ovrp.c). Both stay a player's choice in the start window.
+    "x3180994211970184": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
 }
 
 

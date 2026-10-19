@@ -564,12 +564,17 @@ static int klgl_base_count(void) {
 // glTexBufferEXT ONLY when the string is there, while its ES 3.1 RHI binds
 // SRVs as GL_TEXTURE_BUFFER regardless: without the name the pointer stays
 // NULL and the first SRV jumps to address 0, which is where Tales from the
-// Galaxy's Edge (x3484270071659289) died.
+// Galaxy's Edge (x3484270071659289) died. Star Wars Pinball VR
+// (x3180994211970184, UE 4.25 on GLES) dies the same way: its render thread
+// calls glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, buf) through the NULL pointer
+// right after the first textures are made.
 static const char *klgl_ext_extra(void) {
     const char *t = kl_driver_target_name();
     if (!t) return NULL;
     if (strcmp(t, "cs1") == 0) return "GL_OES_texture_npot";
-    if (g_es_major >= 3 && strcmp(t, "x3484270071659289") == 0) return "GL_EXT_texture_buffer";
+    if (g_es_major >= 3 && (strcmp(t, "x3484270071659289") == 0 ||
+                            strcmp(t, "x3180994211970184") == 0))
+        return "GL_EXT_texture_buffer";
     // The third of the three names klgl_want_msrtt is about.
     if (g_es_major >= 3 && klgl_want_msrtt()) return "GL_EXT_multisampled_render_to_texture";
     return NULL;

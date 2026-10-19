@@ -448,16 +448,22 @@ static void ue4_maybe_stdout_cmdline(const char *proj) {
 // line is written there before the engine starts, and taken out again when the
 // switch is off — the file outlives every build. Every other line of the file
 // is left as it is.
-static void ue4_moss_steam_pso_list(FILE *out) {
-    const char *t = kl_driver_target_name();
-    if (!t || strcmp(t, "moss") || !kl_steamapi_shipped()) return;
-    int on = kl_env_on("KL_UE4_PSO_LIST", 0);
-    static const char key[] = "r.ShaderPipelineCache.Enabled";
+// One `key=value` line in one [section] of a game's user Engine.ini
+// (<files>/<native>/<Project>/<Project>/Saved/Config/Android/Engine.ini), put
+// there before the engine starts when `on`, and taken out again when not — the
+// file outlives every build. Every other line of the file is left as it is.
+// Returns 0 when the file already said what it should, 1 when it was written,
+// -1 when it could not be.
+static int ue4_user_engine_ini(const char *project, const char *section,
+                               const char *key, const char *value, int on,
+                               char *path_out, size_t path_cap) {
     char dir[1024], path[1100], tmp[1110];
-    snprintf(dir, sizeof dir, "%s/%s/MossGame/MossGame/Saved/Config/Android",
-             kl_jni_files_dir(), g_native_dir);
+    snprintf(dir, sizeof dir, "%s/%s/%s/%s/Saved/Config/Android",
+             kl_jni_files_dir(), g_native_dir, project, project);
     snprintf(path, sizeof path, "%s/Engine.ini", dir);
     snprintf(tmp, sizeof tmp, "%s.kltmp", path);
+    if (path_out) snprintf(path_out, path_cap, "%s", path);
+    size_t sl = strlen(section), kl = strlen(key), vl = strlen(value);
 
     char *old = NULL; size_t n = 0;
     FILE *f = fopen(path, "rb");
@@ -468,53 +474,50 @@ static void ue4_moss_steam_pso_list(FILE *out) {
         fclose(f);
         if (old) old[n] = 0;
     }
-    if (!old && !on) return;
+    if (!old && !on) return 0;
 
-    // Copy the file line by line, without any line of ours: a key line in
-    // [ConsoleVariables] is dropped, and the section header remembered so the
-    // line goes right under it when the switch is on.
-    size_t cap = n + 128;
+    // Copy the file line by line, without any line of ours: a key line in the
+    // section is dropped, and the section header remembered so the line goes
+    // right under it when the switch is on.
+    size_t cap = n + sl + kl + vl + 16;
     char *nw = malloc(cap);
-    if (!nw) { free(old); return; }
+    if (!nw) { free(old); return -1; }
     size_t w = 0;
-    int in_cv = 0, had_cv = 0, had_key = 0, was_on = 0;
+    int in_sec = 0, had_sec = 0, had_key = 0, was_on = 0;
     const char *p = old ? old : "";
     while (*p) {
         const char *e = strchr(p, '\n');
         size_t ll = e ? (size_t)(e - p + 1) : strlen(p);
         const char *s = p;
         while (s < p + ll && (*s == ' ' || *s == '\t')) s++;
-        if (*s == '[') in_cv = !strncmp(s, "[ConsoleVariables]", 18);
-        int keyline = in_cv && !strncmp(s, key, sizeof key - 1) &&
-                      (s[sizeof key - 1] == '=' || s[sizeof key - 1] == ' ');
+        if (*s == '[') in_sec = !strncmp(s, section, sl);
+        int keyline = in_sec && !strncmp(s, key, kl) && (s[kl] == '=' || s[kl] == ' ');
         if (keyline) {
             had_key = 1;
             const char *v = strchr(s, '=');
-            was_on |= v && v[1] == '1';
+            was_on |= v && !strncmp(v + 1, value, vl);
         } else {
             memcpy(nw + w, p, ll); w += ll;
-            if (in_cv && *s == '[' && on && !had_cv) {
+            if (in_sec && *s == '[' && on && !had_sec) {
                 if (nw[w - 1] != '\n') nw[w++] = '\n';
-                w += (size_t)snprintf(nw + w, cap - w, "%s=1\n", key);
-                had_cv = 1;
+                w += (size_t)snprintf(nw + w, cap - w, "%s=%s\n", key, value);
+                had_sec = 1;
             }
         }
         p += ll;
     }
-    if (on && !had_cv) {
+    if (on && !had_sec) {
         if (w && nw[w - 1] != '\n') nw[w++] = '\n';
-        w += (size_t)snprintf(nw + w, cap - w, "\n[ConsoleVariables]\n%s=1\n", key);
+        w += (size_t)snprintf(nw + w, cap - w, "\n%s\n%s=%s\n", section, key, value);
     }
     free(old);
     if (on ? (had_key && was_on) : !had_key) {   // already as it should be
         free(nw);
-        if (out) fprintf(out, "  [ue4] Moss from Steam: Unreal's own pipeline list %s (KL_UE4_PSO_LIST)\n",
-                         on ? "on, as before" : "off, as the game ships");
-        return;
+        return 0;
     }
     char mk[1024];
     snprintf(mk, sizeof mk, "%s/%s", kl_jni_files_dir(), g_native_dir);
-    static const char *const parts[] = { "MossGame", "MossGame", "Saved", "Config", "Android" };
+    const char *const parts[] = { project, project, "Saved", "Config", "Android" };
     for (size_t i = 0; i < sizeof parts / sizeof *parts; i++) {
         mkdir(mk, 0777);
         strncat(mk, "/", sizeof mk - strlen(mk) - 1);
@@ -527,9 +530,59 @@ static void ue4_moss_steam_pso_list(FILE *out) {
     if (ok) ok = rename(tmp, path) == 0;
     else remove(tmp);
     free(nw);
-    if (out) fprintf(out, "  [ue4] Moss from Steam: Unreal's own pipeline list %s (KL_UE4_PSO_LIST, %s)%s\n",
-                     on ? "switched on" : "back off, as the game ships", path,
-                     ok ? "" : " — could not write the file");
+    return ok ? 1 : -1;
+}
+
+static void ue4_moss_steam_pso_list(FILE *out) {
+    const char *t = kl_driver_target_name();
+    if (!t || strcmp(t, "moss") || !kl_steamapi_shipped()) return;
+    int on = kl_env_on("KL_UE4_PSO_LIST", 0);
+    char path[1100];
+    int r = ue4_user_engine_ini("MossGame", "[ConsoleVariables]",
+                                "r.ShaderPipelineCache.Enabled", "1", on, path, sizeof path);
+    if (!out) return;
+    if (r == 0)
+        fprintf(out, "  [ue4] Moss from Steam: Unreal's own pipeline list %s (KL_UE4_PSO_LIST)\n",
+                on ? "on, as before" : "off, as the game ships");
+    else
+        fprintf(out, "  [ue4] Moss from Steam: Unreal's own pipeline list %s (KL_UE4_PSO_LIST, %s)%s\n",
+                on ? "switched on" : "back off, as the game ships", path,
+                r > 0 ? "" : " — could not write the file");
+}
+
+// KL_UE4_MOBILE_MULTIVIEW_OFF=1 — Star Wars Pinball VR (x3180994211970184,
+// UE 4.25 on GLES) is drawn one eye after the other instead of with mobile
+// multiview.
+//
+// The project ships vr.MobileMultiView=True, and in this engine's
+// FSceneView::FSceneView that cvar alone turns bIsMobileMultiViewEnabled on —
+// whether or not the RHI has multiview (GSupportsMobileMultiView stays 0 here:
+// the GL gateway does not name the extensions to it, see ue4_no_multiview).
+// The eye layer then is DoubleWide, so the renderer goes the non-direct way and
+// reads SceneContext.MobileMultiViewSceneColor in GetMultiViewSceneColor —
+// which was never made: a NULL read at its first scene frame (Mac, 2026-10-19).
+// Told multiview exists (KL_OVRP_GL_ARRAY, the Array eye layout Maestro and
+// Tetris Effect get) it runs, but every eye picture stayed empty, colour and
+// alpha 0. With the cvar off the same cooked shaders run single-view (UE4's own
+// `#define gl_ViewID_OVR 0`) and the room and its "Choose Your Side" screen are
+// in both halves of the eye picture.
+//
+// The cvar is read-only: -dpcvars and the -ini: override on the command line
+// (dropped in a Shipping build) do not reach it; the game's user Engine.ini
+// does. Written there before the engine starts, and taken out again with
+// KL_UE4_MOBILE_MULTIVIEW_OFF=0.
+static void ue4_mobile_multiview_off(FILE *out) {
+    const char *t = kl_driver_target_name();
+    if (!t || strcmp(t, "x3180994211970184")) return;
+    int on = kl_env_on("KL_UE4_MOBILE_MULTIVIEW_OFF", 1);
+    char path[1100];
+    int r = ue4_user_engine_ini("SWP_VR", "[/Script/Engine.RendererSettings]",
+                                "vr.MobileMultiView", "False", on, path, sizeof path);
+    if (out)
+        fprintf(out, "  [ue4] mobile multiview %s in the game's Engine.ini "
+                     "(KL_UE4_MOBILE_MULTIVIEW_OFF%s%s)%s\n",
+                on ? "off" : "as the project ships it", r > 0 ? ", " : "",
+                r > 0 ? path : "", r < 0 ? " — could not write the file" : "");
 }
 
 int kl_ue4_configure(const char *libdir, const char *entry_lib, FILE *out) {
@@ -569,6 +622,7 @@ int kl_ue4_configure(const char *libdir, const char *entry_lib, FILE *out) {
         }
     }
     ue4_moss_steam_pso_list(out);
+    ue4_mobile_multiview_off(out);
     if (out) {
         fprintf(out, "  [ue4] activity: %s\n", g_activity);
         fprintf(out, "  [ue4] userdata: %s\n", kl_jni_files_dir());

@@ -1690,6 +1690,11 @@ static int klovrp_title_cap(const char *t) {
         // start window and asked for it as the default when it was verified,
         // 2026-10-18 (7-8 ms of GPU a frame at 60 a second there).
         if (t && strcmp(t, "x2401648309868679") == 0) cap_dflt = 4096;
+        // Star Wars Pinball VR (UE 4.25 on GLES): its owner chose 4608 in the
+        // start window and asked for it as the default, 2026-10-19, with 120 Hz
+        // and a frame on every second refresh (targets.py STORE_DEFAULTS). On
+        // the headset: 59.3 shown of 119.5 Hz, about 3 ms of game GPU a frame.
+        if (t && strcmp(t, "x3180994211970184") == 0) cap_dflt = 4608;
         // Batman: Arkham Shadow: 4608, the eye size rebelancap runs it at with
         // foveation "high" (kl_fove) — see the note on its row in
         // visionos/targets.py. Unfoveated he measured 4032 as its rung and 5120
@@ -7290,6 +7295,35 @@ _Static_assert(offsetof(ovrp_layer_desc_eyefov, layer_flags) == 0x1c, "desc");
 _Static_assert(offsetof(ovrp_layer_desc_eyefov, fov) == 0x20, "desc");
 _Static_assert(offsetof(ovrp_layer_desc_eyefov, visible_rect) == 0x40, "desc");
 _Static_assert(offsetof(ovrp_layer_desc_eyefov, max_viewport_size) == 0x60, "desc");
+_Static_assert(offsetof(ovrp_layer_desc_eyefov, mv_format) == 0x6c, "desc");
+
+// **How much of it is the guest's.** The three motion-vector fields came with
+// ovrp_CalculateEyeLayerDesc3, and a game built against an older plugin owns
+// only the first 0x6c bytes: its desc is a stack local of that size. Measured in
+// the plugins the games ship: 1.30, 1.44, 1.45 and 1.46 copy 0x6c in
+// Compositor::ExportEyeLayerDesc and their builder clears 0x64 from +0x08;
+// 1.51 (the first with ...Desc3) clears 0x74 from +0x08, i.e. all 0x7c.
+// Writing the whole struct into a 1.44 guest ran 16 bytes past its desc — Star
+// Wars Pinball VR (x3180994211970184, UE 4.25) keeps it at sp+0x40 in
+// FOculusHMD::UpdateStereoRenderingParams with the stack guard at sp+0xb0, and
+// died on "stack smashing detected" at its first eye layer. KL_OVRP_EYE_DESC_SHORT
+// =1/0 forces either size; unset, a game whose plugin is older than 1.51 gets
+// the short one, and a game of unknown version the whole struct, as before.
+static size_t klovrp_guest_desc_size(void) {
+    static size_t n;
+    if (!n) {
+        const char *v = klovrp_guest_version();
+        int major = 0, minor = 0;
+        int old = v && sscanf(v, "%d.%d", &major, &minor) == 2 && major == 1 && minor < 51;
+        n = kl_env_on("KL_OVRP_EYE_DESC_SHORT", old)
+                ? offsetof(ovrp_layer_desc_eyefov, mv_format) : sizeof(ovrp_layer_desc_eyefov);
+        if (n < sizeof(ovrp_layer_desc_eyefov))
+            fprintf(stderr, "  [ovrp] layer desc: %#zx bytes, the size OVRPlugin %s has "
+                            "(no motion-vector fields before 1.51; KL_OVRP_EYE_DESC_SHORT)\n",
+                    n, v ? v : "?");
+    }
+    return n;
+}
 
 // ovrpTextureFormat -> GL internalformat.
 //
@@ -9480,9 +9514,13 @@ static uint64_t klovrp_CalculateEyeLayerDesc2(int layout, int mip_levels,
                                               float texture_scale) {
     ovrp_hit("ovrp_CalculateEyeLayerDesc2");
     if (!out) return OVRP_FAIL_INVALID_PARAM;
-    klovrp_fill_eye_desc(out, layout, mip_levels, sample_count, format,
+    // Built whole, handed over in the guest's size (klovrp_guest_desc_size): a
+    // plugin before 1.51 has only this form and a desc without the mv fields.
+    ovrp_layer_desc_eyefov d;
+    klovrp_fill_eye_desc(&d, layout, mip_levels, sample_count, format,
                          depth_format, 10 /* D24_S8, as ...2 itself does */,
                          10, layer_flags, texture_scale);
+    memcpy(out, &d, klovrp_guest_desc_size());
     return OVRP_SUCCESS;
 }
 
@@ -9535,7 +9573,9 @@ static uint64_t klovrp_CalculateLayerDesc(int shape, int layout,
     // because a fault in our address space is reported as ours.
     if (!texture_size) return OVRP_FAIL_INVALID_PARAM;
     ovrp_sizei sz = *texture_size;
-    memset(out, 0, sizeof *out);
+    // The guest's union is no larger than its eye desc (1.44 copies 0x6c for
+    // both in Compositor::ExportLayerDesc), so the same size bounds the clear.
+    memset(out, 0, klovrp_guest_desc_size());
     out->shape        = shape;
     out->layout       = layout;
     out->texture_size = sz;
@@ -9646,7 +9686,10 @@ static uint64_t klovrp_SetupLayer(void *device, const ovrp_layer_desc_eyefov *de
     // bug we can decline to have, and a reused id would make a stale handle from
     // before the restart address the new layer.
     l->id     = g_next_layer_id++;
-    l->desc   = *desc;
+    // Only the guest's part of the desc is read; an older plugin's has no mv
+    // fields, and what lies after it on the guest's stack is not one.
+    memset(&l->desc, 0, sizeof l->desc);
+    memcpy(&l->desc, desc, klovrp_guest_desc_size());
     l->is_eye = is_eye;
     l->used   = 1;
     *layer_id = l->id;
