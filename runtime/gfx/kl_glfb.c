@@ -1859,6 +1859,77 @@ static int klfb_rewrite_int_precision(char *buf, size_t cap) {
     return 1;
 }
 
+// UE 4.19's HLSLCC passes every varying through an interface block when the
+// device names GL_EXT_shader_io_blocks (which its ES 3.1 path requires — see
+// klgl_ext_extra in kl_egl.c, Vader Immortal I):
+//   #define INTERFACE_BLOCK(Pos, Interp, Modifiers, Semantic, PreType, PostType) \
+//       layout(location=Pos) Modifiers Semantic { PreType PostType; }
+//   INTERFACE_BLOCK(0, noperspective , out , TEXCOORD0, highp vec2, Data) out_TEXCOORD0;
+//   ... out_TEXCOORD0.Data.xy = ...;
+// An in/out block is ES 3.1; at 300 es ANGLE says "interface blocks must be
+// uniform". Each block holds one member, so it is a plain varying in a wrapper:
+// the use becomes "layout(location=0) out highp vec2 out_TEXCOORD0;" and
+// "out_TEXCOORD0.Data" becomes "out_TEXCOORD0", after which the varying pass
+// pairs the two stages by location as it does for every HLSLCC shader.
+// noperspective is dropped (ES 3.0 has no such qualifier; the shaders that ask
+// for it are screen-space passes, where it changes nothing); flat and centroid
+// stay. Everything shrinks, so the edit is in place.
+static int klfb_flatten_interface_blocks(char *buf) {
+    if (!strstr(buf, "#define INTERFACE_BLOCK(Pos, Interp, Modifiers, Semantic, PreType, PostType)"))
+        return 0;
+    int changed = 0;
+    for (char *p = buf; (p = strstr(p, "INTERFACE_BLOCK(")); ) {
+        char *a = p + 16;
+        if (*a < '0' || *a > '9') { p = a; continue; }   // the #define itself
+        char *close = strchr(a, ')');
+        char *semi = close ? strchr(close, ';') : NULL;
+        if (!close || !semi) break;
+        // Six comma-separated arguments, none of which holds a comma or ')'.
+        char arg[6][64];
+        int na = 0;
+        for (char *s = a; s <= close && na < 6; na++) {
+            char *e = s;
+            while (e < close && *e != ',') e++;
+            while (s < e && (*s == ' ' || *s == '\t')) s++;
+            char *t = e;
+            while (t > s && (t[-1] == ' ' || t[-1] == '\t')) t--;
+            if ((size_t)(t - s) >= sizeof arg[0]) { na = -1; break; }
+            memcpy(arg[na], s, (size_t)(t - s)); arg[na][t - s] = 0;
+            s = e + 1;
+        }
+        char inst[64];
+        char *n = close + 1, *ne;
+        while (*n == ' ' || *n == '\t') n++;
+        for (ne = n; KLFB_IDENT(*ne); ne++) {}
+        if (na != 6 || ne == n || (size_t)(ne - n) >= sizeof inst) { p = close; continue; }
+        memcpy(inst, n, (size_t)(ne - n)); inst[ne - n] = 0;
+        // PostType may carry an array size ("Data[2]"): it moves to the name.
+        char member[64], dims[32] = "";
+        snprintf(member, sizeof member, "%s", arg[5]);
+        char *br = strchr(member, '[');
+        if (br) { snprintf(dims, sizeof dims, "%s", br); *br = 0; }
+        const char *interp = strcmp(arg[1], "noperspective") == 0 ? "" : arg[1];
+        char rep[256];
+        int rl = snprintf(rep, sizeof rep, "layout(location=%s) %s%s%s %s %s%s;",
+                          arg[0], interp, *interp ? " " : "", arg[2], arg[4], inst, dims);
+        if (rl <= 0 || rl > semi + 1 - p) { p = close; continue; }
+        memcpy(p, rep, (size_t)rl);
+        memmove(p + rl, semi + 1, strlen(semi + 1) + 1);
+        // "<inst>.<member>" -> "<inst>" everywhere after the declaration.
+        char from[160];
+        snprintf(from, sizeof from, "%s.%s", inst, member);
+        size_t fl = strlen(from), il = strlen(inst);
+        for (char *u = p + rl; (u = strstr(u, from)); ) {
+            if ((u > buf && KLFB_IDENT(u[-1])) || KLFB_IDENT(u[fl])) { u += fl; continue; }
+            memmove(u + il, u + fl, strlen(u + fl) + 1);
+            u += il;
+        }
+        p += rl;
+        changed = 1;
+    }
+    return changed;
+}
+
 static char *klfb_rewrite_glsl(char *buf, size_t cap, uint32_t shader) {
     int changed = 0;
     klfb_pin_reset(shader);
@@ -1939,6 +2010,9 @@ static char *klfb_rewrite_glsl(char *buf, size_t cap, uint32_t shader) {
             changed = 1;
         }
     }
+
+    // Before the varying pass, which then sees ordinary located varyings.
+    if (klfb_flatten_interface_blocks(buf)) changed = 1;
 
     // Varying locations (both spellings): ES 3.1 syntax on a vertex output or a
     // fragment input, which the 300 es context rejects. Needs the stage; fall
@@ -9054,7 +9128,15 @@ static int klfb_cimg_on(void) {
              // The Walking Dead: Saints & Sinners - Chapter 2: Retribution
              // (x5190288877703616, UE 4.27.2) is the sixth: once it drew,
              // all its textures were purple (on device, 2026-10-17).
-             kl_env_on("KL_GLFB_COPYIMAGE_EMU", t && (strcmp(t, "x2897337400373711") == 0 ||
+             // Vader Immortal I–III (x2108775495884888, x2223615721048141,
+             // x2426206484098337, UE 4.19) next: the title logo's stone texture
+             // read as solid magenta — all-zero ASTC blocks, the decoder's
+             // error colour — so the logo came out pink instead of grey stone
+             // with red edges (his headset, 2026-10-19; Mac, texture dump).
+             kl_env_on("KL_GLFB_COPYIMAGE_EMU", t && (strcmp(t, "x2108775495884888") == 0 ||
+                                                      strcmp(t, "x2223615721048141") == 0 ||
+                                                      strcmp(t, "x2426206484098337") == 0 ||
+                                                      strcmp(t, "x2897337400373711") == 0 ||
                                                       strcmp(t, "x3484270071659289") == 0 ||
                                                       strcmp(t, "x6963344583787383") == 0 ||
                                                       strcmp(t, "x3386618894743567") == 0 ||
@@ -9739,10 +9821,14 @@ typedef struct klfb_vao_state {
 // Per context (klfb_ctx_slot): VAOs are container objects, never shared, and
 // their NAMES repeat across contexts — VAO 2 of one context is not VAO 2 of
 // another, and which one is bound is each context's own business.
+// One attribute of the DEFAULT vertex array object, as the guest last set it.
+typedef struct { uint8_t on, integer, norm; int32_t size; uint32_t type;
+                 int32_t stride; uint32_t buffer; uintptr_t off; uint32_t divisor; } klfb_attr0;
 typedef struct {
     klfb_vao_state  vaos[KLFB_MAX_VAOS];
     unsigned        nvaos;
     klfb_vao_state *cur;                             // the bound VAO's state
+    klfb_attr0      vao0[KLFB_VTX_ATTRS];            // what THIS context's VAO 0 holds
 } klfb_vao_ctx;
 #define KLFB_VAO_CTX ((klfb_vao_ctx *)klfb_ctx_slot(KLFB_CTX_SLOT_VAO, sizeof(klfb_vao_ctx)))
 #define g_vaos    (KLFB_VAO_CTX->vaos)
@@ -9816,11 +9902,108 @@ static void klfb_VertexBindingDivisor(uint32_t binding, uint32_t divisor) {
     }
 }
 
+// ---- the default VAO across a render-thread handoff ------------------------
+//
+// The guest has ONE rendering context; a thread that makes it current while
+// another still holds it gets a second ANGLE context in the same share group
+// (klfb_thread_gl, the UE4 render-thread handoff). Shared objects come along,
+// container state does not — and the default VAO is container state. Unreal
+// caches every attribute it has enabled and every pointer it has set
+// (FOpenGLContextState) and calls GL only when its cache says something
+// changed. Vader Immortal I starts its VR render thread after the loading
+// screen; on that thread's fresh context attributes 0 and 1 were never enabled,
+// Unreal's cache said they were, and every world draw read a constant position:
+// all triangles on one point, eyes black, sound playing. So the guest's view of
+// VAO 0 is kept once, and a context that holds something else is brought in
+// line before its next draw. One context throughout (the migration default)
+// never differs, and the check is a compare.
+static klfb_attr0 g_guest_vao0[KLFB_VTX_ATTRS];
+static void (*g_real_EnableVAA)(uint32_t);
+static void (*g_real_DisableVAA)(uint32_t);
+static void (*g_real_VAPointer)(uint32_t, int32_t, uint32_t, uint8_t, int32_t, const void *);
+static void (*g_real_VAIPointer)(uint32_t, int32_t, uint32_t, int32_t, const void *);
+static void (*g_real_VADivisor)(uint32_t, uint32_t);
+static int klfb_vao0_bound(void) { return !g_cur_vao || g_cur_vao->name == 0; }
+static uint32_t klfb_array_buffer(void) {
+    int32_t b = 0;
+    if (a_glGetIntegerv) a_glGetIntegerv(0x8894 /* ARRAY_BUFFER_BINDING */, &b);
+    return (uint32_t)b;
+}
+static void klfb_EnableVertexAttribArray(uint32_t i) {
+    if (g_real_EnableVAA) g_real_EnableVAA(i);
+    if (i < KLFB_VTX_ATTRS && klfb_vao0_bound())
+        g_guest_vao0[i].on = KLFB_VAO_CTX->vao0[i].on = 1;
+}
+static void klfb_DisableVertexAttribArray(uint32_t i) {
+    if (g_real_DisableVAA) g_real_DisableVAA(i);
+    if (i < KLFB_VTX_ATTRS && klfb_vao0_bound())
+        g_guest_vao0[i].on = KLFB_VAO_CTX->vao0[i].on = 0;
+}
+static void klfb_vao0_note(uint32_t i, int integer, int32_t size, uint32_t type,
+                           uint8_t norm, int32_t stride, const void *ptr) {
+    if (i >= KLFB_VTX_ATTRS || !klfb_vao0_bound()) return;
+    klfb_attr0 *g = &g_guest_vao0[i];
+    g->integer = (uint8_t)integer; g->norm = norm; g->size = size; g->type = type;
+    g->stride = stride; g->buffer = klfb_array_buffer(); g->off = (uintptr_t)ptr;
+    klfb_attr0 *c = &KLFB_VAO_CTX->vao0[i];
+    uint8_t on = c->on; uint32_t div = c->divisor;
+    *c = *g; c->on = on; c->divisor = div;
+}
+static void klfb_VertexAttribPointer(uint32_t i, int32_t size, uint32_t type, uint8_t norm,
+                                     int32_t stride, const void *ptr) {
+    if (g_real_VAPointer) g_real_VAPointer(i, size, type, norm, stride, ptr);
+    klfb_vao0_note(i, 0, size, type, norm, stride, ptr);
+}
+static void klfb_VertexAttribIPointer(uint32_t i, int32_t size, uint32_t type,
+                                      int32_t stride, const void *ptr) {
+    if (g_real_VAIPointer) g_real_VAIPointer(i, size, type, stride, ptr);
+    klfb_vao0_note(i, 1, size, type, 0, stride, ptr);
+}
+static void klfb_VertexAttribDivisor(uint32_t i, uint32_t div) {
+    if (g_real_VADivisor) g_real_VADivisor(i, div);
+    if (i < KLFB_VTX_ATTRS && klfb_vao0_bound())
+        g_guest_vao0[i].divisor = KLFB_VAO_CTX->vao0[i].divisor = div;
+}
+static void klfb_vao0_sync(void) {
+    if (!klfb_vao0_bound()) return;
+    klfb_attr0 *c = KLFB_VAO_CTX->vao0;
+    if (!memcmp(c, g_guest_vao0, sizeof g_guest_vao0)) return;
+    if (!g_real_EnableVAA || !g_real_DisableVAA || !g_real_VAPointer) return;
+    static void (*r_BindBuffer)(uint32_t, uint32_t);
+    if (!r_BindBuffer) r_BindBuffer = asym("glBindBuffer");
+    if (!r_BindBuffer) return;
+    uint32_t keep = klfb_array_buffer();
+    int n = 0;
+    for (unsigned i = 0; i < KLFB_VTX_ATTRS; i++) {
+        klfb_attr0 *g = &g_guest_vao0[i];
+        if (!memcmp(&c[i], g, sizeof *g)) continue;
+        n++;
+        if (g->size) {
+            r_BindBuffer(0x8892 /* ARRAY_BUFFER */, g->buffer);
+            if (g->integer && g_real_VAIPointer)
+                g_real_VAIPointer(i, g->size, g->type, g->stride, (const void *)g->off);
+            else
+                g_real_VAPointer(i, g->size, g->type, g->norm, g->stride, (const void *)g->off);
+        }
+        if (g_real_VADivisor) g_real_VADivisor(i, g->divisor);
+        if (g->on) g_real_EnableVAA(i); else g_real_DisableVAA(i);
+        c[i] = *g;
+    }
+    r_BindBuffer(0x8892, keep);
+    static int said;
+    if (said < 4) {
+        said++;
+        fprintf(stderr, "  [glfb] default VAO replayed on this context: %d attribute(s) "
+                        "the guest set on another (render-thread handoff)\n", n);
+    }
+}
+
 // Re-express the bound VAO's ES 3.1 attribute-binding state as ES 3.0 attribute
 // pointers, right before a draw. No-op for a VAO that never used the format API.
 static void klfb_ssbo_apply(void);                 // read-only storage buffers, below
 static void klfb_apply_vertex_bindings(void) {
     klfb_ssbo_apply();
+    klfb_vao0_sync();
     klfb_vao_state *v = g_cur_vao;
     if (!v || !v->used) return;
     static void (*r_BindBuffer)(uint32_t, uint32_t);
@@ -11492,6 +11675,11 @@ static const struct { const char *name; void *thunk; void **real; } g_thunks[] =
     {"glBindBuffer",     (void *)klfb_BindBuffer,     (void **)&g_real_BindBuffer},
     {"glBufferSubData",  (void *)klfb_BufferSubData,  (void **)&g_real_BufferSubData_t},
     {"glBindVertexArray", (void *)klfb_BindVertexArray, (void **)&g_real_BindVertexArray_vtx},
+    {"glEnableVertexAttribArray",  (void *)klfb_EnableVertexAttribArray,  (void **)&g_real_EnableVAA},
+    {"glDisableVertexAttribArray", (void *)klfb_DisableVertexAttribArray, (void **)&g_real_DisableVAA},
+    {"glVertexAttribPointer",      (void *)klfb_VertexAttribPointer,      (void **)&g_real_VAPointer},
+    {"glVertexAttribIPointer",     (void *)klfb_VertexAttribIPointer,     (void **)&g_real_VAIPointer},
+    {"glVertexAttribDivisor",      (void *)klfb_VertexAttribDivisor,      (void **)&g_real_VADivisor},
     {"glVertexAttribFormat",  (void *)klfb_VertexAttribFormat,  (void **)&g_real_VtxAttribFormat},
     {"glVertexAttribIFormat", (void *)klfb_VertexAttribIFormat, (void **)&g_real_VtxAttribIFormat},
     {"glVertexAttribBinding", (void *)klfb_VertexAttribBinding, (void **)&g_real_VtxAttribBinding},
@@ -12407,6 +12595,30 @@ static unsigned long klfb_probe_fbo(uint32_t fb, float *fbuf, uint8_t *bbuf,
             // fall through to the ordinary read, now against the staging FBO
         }
     }
+    // A multiview attachment (OVR_multiview, KL_OVRP_GL_ARRAY) cannot be read
+    // from the guest's framebuffer at all — glReadPixels answers
+    // INVALID_FRAMEBUFFER_OPERATION — so read its first view through a
+    // framebuffer of our own holding that one layer. Debug path only.
+    if (otype == 0x1702 && !resolved_via) {
+        int32_t views = 0;
+        r_GetFramebufferAttachmentParameteriv(0x8CA8, 0x8CE0,
+                                              0x9630 /* TEXTURE_NUM_VIEWS_OVR */, &views);
+        if (a_glGetError) a_glGetError();
+        static void (*r_FramebufferTextureLayer)(uint32_t, uint32_t, uint32_t, int32_t, int32_t);
+        static void (*r_GenFramebuffers3)(int32_t, uint32_t *);
+        static uint32_t layer_fb;
+        if (!r_FramebufferTextureLayer) {
+            r_FramebufferTextureLayer = asym("glFramebufferTextureLayer");
+            r_GenFramebuffers3 = asym("glGenFramebuffers");
+        }
+        if (views > 1 && r_FramebufferTextureLayer && r_GenFramebuffers3) {
+            if (!layer_fb) r_GenFramebuffers3(1, &layer_fb);
+            r_BindFramebuffer(0x8CA8, layer_fb);
+            r_FramebufferTextureLayer(0x8CA8, 0x8CE0, (uint32_t)oname, 0, 0);
+            if (aw <= 0 || ah <= 0) { aw = g_w; ah = g_h; hinted = 1; }
+            resolved_via = layer_fb;
+        }
+    }
     int32_t rfmt = 0, rtype = 0;
     a_glGetIntegerv(KLFB_IMPLEMENTATION_COLOR_READ_FORMAT, &rfmt);
     a_glGetIntegerv(KLFB_IMPLEMENTATION_COLOR_READ_TYPE, &rtype);
@@ -12850,6 +13062,22 @@ static unsigned glfb_capture_now(const char *dir) {
             } else {   // not found either: put the guest's binding back
                 a_BindFramebuffer(0x8CA8, (uint32_t)(read_fb >= 0 ? read_fb : 0));
             }
+        }
+    }
+    // A multiview eye framebuffer (KL_OVRP_GL_ARRAY) is not readable as it is
+    // (INVALID_FRAMEBUFFER_OPERATION): read the left eye's layer instead.
+    if (a_GetFbAttachmentParam && (src_fb || read_fb > 0)) {
+        int32_t views = 0, otype = 0, oname = 0;
+        if (!src_fb) a_BindFramebuffer(0x8CA8, (uint32_t)read_fb);
+        a_GetFbAttachmentParam(0x8CA8, 0x8CE0, 0x8CD0 /* OBJECT_TYPE */, &otype);
+        if (otype == 0x1702) {
+            a_GetFbAttachmentParam(0x8CA8, 0x8CE0, 0x9630 /* NUM_VIEWS_OVR */, &views);
+            a_GetFbAttachmentParam(0x8CA8, 0x8CE0, 0x8CD1 /* OBJECT_NAME */, &oname);
+        }
+        if (a_glGetError) a_glGetError();
+        if (views > 1 && oname) {
+            uint32_t lf = klfb_read_from_texture_layer((uint32_t)oname, 0);
+            if (lf) { src_fb = lf; if (src_w <= 0 || src_h <= 0 || src_w == g_w) { int32_t tw = 0, th = 0; if (klfb_tex_info((uint32_t)oname, NULL, &tw, &th) && tw > 0) { src_w = tw; src_h = th; } else if (vp[2] > 0 && vp[3] > 0) { src_w = vp[2]; src_h = vp[3]; } } }
         }
     }
 

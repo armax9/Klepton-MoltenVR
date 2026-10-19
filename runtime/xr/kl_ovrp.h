@@ -639,6 +639,11 @@ int  kl_ovrp_eyeless_black(void);
 // Passthrough"): the room is meant to show wherever the frame has no picture,
 // so no black goes behind it — neither the one above nor the mixed space's.
 int  kl_ovrp_passthrough_live(void);
+// The play area the start window's room measuring is using, its extent across
+// the floor in metres (KleptonBoundary, when it takes a room or the stationary
+// circle). From then on the Guardian answers report it (kl_ovrp.c,
+// KL_OVRP_BOUNDARY) instead of the fixed default.
+void kl_ovrp_set_play_area(float width, float depth);
 
 // The same bookkeeping for a guest on Meta's OpenXR backend, which files its
 // passthrough layer through ovrp_EnqueueSubmitLayer2 but ends its frames with
@@ -857,6 +862,9 @@ void kl_ovrp_eye_told_tangents(int eye, float tan[4]);
 int kl_ovrp_multiview(void);
 // Whether this target is served the Array eye layout on GL (see kl_ovrp.c).
 int kl_ovrp_gl_array(void);
+// The same answer for a target named by the caller, uncached: kl_app.c's
+// shader-cache fingerprint asks before the driver knows its target.
+int kl_ovrp_gl_array_for(const char *target);
 
 // ---------------------------------------------------------------------------
 // The eye view, for a guest that is not OVRPlugin's

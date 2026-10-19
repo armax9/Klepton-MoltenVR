@@ -79,6 +79,19 @@ struct KLRoomRecord: Codable, Identifiable, Equatable {
         let m = playMask()
         return Float(m.reduce(0) { $0 + Int($1) }) * cell * cell
     }
+    /// The play area's extent along the grid's two axes, in metres — what a
+    /// Guardian reports as its dimensions (kl_ovrp_set_play_area).
+    var playExtent: (width: Float, depth: Float) {
+        let m = playMask()
+        var x0 = Int(w), x1 = -1, z0 = Int(h), z1 = -1
+        for z in 0..<Int(h) {
+            for x in 0..<Int(w) where m[z * Int(w) + x] != 0 {
+                x0 = min(x0, x); x1 = max(x1, x); z0 = min(z0, z); z1 = max(z1, z)
+            }
+        }
+        guard x1 >= x0, z1 >= z0 else { return (0, 0) }
+        return (Float(x1 - x0 + 1) * cell, Float(z1 - z0 + 1) * cell)
+    }
 }
 
 enum KLRoomStore {

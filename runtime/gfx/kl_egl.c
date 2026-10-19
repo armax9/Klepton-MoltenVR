@@ -575,6 +575,16 @@ static const char *klgl_ext_extra(void) {
     if (g_es_major >= 3 && (strcmp(t, "x3484270071659289") == 0 ||
                             strcmp(t, "x3180994211970184") == 0))
         return "GL_EXT_texture_buffer";
+    // Vader Immortal: Episode I (UE 4.19.2) is cooked for GLSL_ES3_1_ANDROID
+    // only, and its PlatformInitOpenGL takes the ES 3.1 path only when
+    // FAndroidGPUInfo found this name in the string (byte +0x22, next to the
+    // half-float render-target flag). Without it the engine settles on ES2,
+    // asks for GlobalShaderCache-GLSL_ES2.bin, which the game never shipped,
+    // and quits through LowLevelFatalError before its first frame.
+    // Episodes II (x2223615721048141) and III (x2426206484098337) ship the same
+    // engine build: the same "es2" APK, OVRPlugin 1.30.0, ES 3.1 cook.
+    if (g_es_major >= 3 && (strcmp(t, "x2108775495884888") == 0 || strcmp(t, "x2223615721048141") == 0 ||
+                            strcmp(t, "x2426206484098337") == 0)) return "GL_EXT_shader_io_blocks";
     // The third of the three names klgl_want_msrtt is about.
     if (g_es_major >= 3 && klgl_want_msrtt()) return "GL_EXT_multisampled_render_to_texture";
     return NULL;

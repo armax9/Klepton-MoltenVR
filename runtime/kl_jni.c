@@ -2191,6 +2191,17 @@ static const char *klj_field_sval(const klj_field *f) {
     // still a Quest 2). For this title only: every other guest keeps the model
     // it was brought up with.
     if (t && strcmp(t, "redmatter2") == 0 && !strcmp(f->name, "MODEL")) return "Quest";
+    // Vader Immortal I (x2108775495884888, UE 4.19) the same way: its
+    // FAndroidMisc::SetVersionInfo sets IsRunningOnSantaCruz only for maker
+    // "Oculus" with model "Quest", "Monterey" or "Standalone HMD", compared
+    // whole. Off, the game still decided a shader precompile was due (its save
+    // compares FOpenGLProgramBinaryCache's version hash) but read its progress
+    // from UVRUtils::GetQuestShaderPrecompilePercent, which answers 0 off a
+    // Quest — the loading panel stayed for good. The flag also picks the Quest
+    // device profile and the Quest branch of its materials.
+    // Episodes II and III are the same engine and the same check.
+    if (t && (strcmp(t, "x2108775495884888") == 0 || strcmp(t, "x2223615721048141") == 0 ||
+              strcmp(t, "x2426206484098337") == 0) && !strcmp(f->name, "MODEL")) return "Quest";
     return f->sval;
 }
 

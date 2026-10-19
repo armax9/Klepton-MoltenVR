@@ -323,7 +323,7 @@ static int purge_caches(const char *root, int depth) {
 // the GPU family so a restore onto different hardware counts as a change too;
 // KL_GLFB_REWRITE_GEN is our own half of what the cache holds (the blobs are
 // compiled from the text klfb_rewrite_glsl produced).
-static void shader_cache_guard(const char *files) {
+static void shader_cache_guard(const char *files, const char *target) {
     if (!kl_env_on("KL_SHADER_CACHE_GUARD", 1)) return;
 
     char want[256] = "", tmp[128];
@@ -338,6 +338,16 @@ static void shader_cache_guard(const char *files) {
     {
         size_t at = strlen(want);
         snprintf(want + at, sizeof want - at, " glsl=%d", KL_GLFB_REWRITE_GEN);
+    }
+    // ...and single-pass multiview (the Array eye layer): Unreal's programs for
+    // one cannot draw the other. Vader Immortal's blobs from its runs without
+    // multiview would otherwise outlive the switch to it (2026-10-19).
+    {
+        extern int kl_ovrp_gl_array_for(const char *);
+        if (kl_ovrp_gl_array_for(target)) {
+            size_t at = strlen(want);
+            snprintf(want + at, sizeof want - at, " mv=1");
+        }
     }
 
     char stamp[1200];
@@ -565,14 +575,24 @@ int kl_app_configure(const char *resources, const char *container) {
                      g_target->kind == KL_GUEST_GLES3JNI ||
                      g_target->kind == KL_GUEST_LINUX    ||
                      g_target->kind == KL_GUEST_SDL2;
-    if (!folder_fed && !have(g_assets))
-        return missing("staged assets (run stage_assets.sh)", g_assets);
     if (!folder_fed && !have(g_apk))
         return missing("staged APK (run stage_assets.sh)", g_apk);
+    // An APK with no assets/ in it at all is a correct staging, not a missing
+    // one: Vader Immortal I ships its UE4 data entirely in the OBB, apktool
+    // unpacks no assets/ dir, and both stagers stage none. Refusing here failed
+    // the launch before klepton-boot.log existed — no log, no crash report, a
+    // game that simply did not start. The tree's apktool.yml beside it says the
+    // unpack happened; an empty assets/ is then what that APK holds.
+    if (!folder_fed && !have(g_assets)) {
+        char yml[1200];
+        snprintf(yml, sizeof yml, "%s/%s/apktool.yml", container, g_target->tree);
+        if (!have(yml) || mkdir(g_assets, 0755) != 0)
+            return missing("staged assets (run stage_assets.sh)", g_assets);
+    }
     mkdir(g_files, 0755);
     // Before any guest code runs, and before the guest's own file layer can
     // hand it a stale blob. See shader_cache_guard.
-    shader_cache_guard(g_files);
+    shader_cache_guard(g_files, g_target ? g_target->name : NULL);
 
     if (kl_app_target_is_steamlink()) {
         // Which front door this launch opens. The SHELL is the default because

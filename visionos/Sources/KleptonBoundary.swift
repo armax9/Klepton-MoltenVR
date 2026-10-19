@@ -165,6 +165,8 @@ final class KLBoundary {
         active = Active(room: room, rawFromRoom: m, sdf: sdf, wallVerts: buf, wallCount: count)
         lock.unlock()
         NSLog("[room] play area: in room %@ (%.1f m², %d wall vertices)", roomID.uuidString, room.areaM2, count)
+        let ext = room.playExtent
+        kl_ovrp_set_play_area(ext.width, ext.depth)
     }
 
     /// The measured room for a game that asks for one (kl_ovrp's emulated room —
@@ -289,6 +291,7 @@ final class KLBoundary {
             mask.withUnsafeBufferPointer { m in sdf.withUnsafeMutableBufferPointer { s in kl_room_sdf(g, m.baseAddress, s.baseAddress) } }
             let (buf, count) = makeWalls(room, mask: mask)
             circle = (room, sdf, buf, count)
+            kl_ovrp_set_play_area(2 * r, 2 * r)
         }
         guard let c = circle else { return }
         var m = matrix_identity_float4x4

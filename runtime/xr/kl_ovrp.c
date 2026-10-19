@@ -1020,10 +1020,8 @@ static uint64_t klovrp_GetFoveationEyeTrackedSupported(int *out) {
 // overrides in either direction; kl_egl.c offers GL_OVR_multiview to the same
 // targets (klgl_want_multiview), since one without the other is a guest told it
 // may render single-pass into storage it cannot attach.
-int kl_ovrp_gl_array(void) {
-    static int v = -1;
-    if (v < 0) {
-        const char *t = kl_driver_target_name();
+int kl_ovrp_gl_array_for(const char *t) {
+    {
         // Tetris Effect: Connected (x3386618894743567, UE 4.26) is the second:
         // refused, it set its eye layer up again in every frame until all 64
         // slots were eye layers, and stayed black on the headset (2026-10-13).
@@ -1031,9 +1029,24 @@ int kl_ovrp_gl_array(void) {
         // the double-wide picture UE4 then draws; this runtime can hand out the
         // array the guest asked for, and with it the game has its picture and
         // plays (owner, headset, the same day).
-        v = kl_env_on("KL_OVRP_GL_ARRAY", t && (strcmp(t, "x6963344583787383") == 0 ||
-                                                strcmp(t, "x3386618894743567") == 0));
+        // Vader Immortal I–III (UE 4.19, cooked for mobile multiview) take
+        // DoubleWide when told no multiview and boot, but then every LIT
+        // material draws black: the console round the menu screen, the gloved
+        // hands, the title logo's red (its emissive strength read a junk
+        // value) — only the self-lit screen showed, on black, so there was
+        // nothing to point with (his headset, 2026-10-19). With the Array
+        // layer and real multiview the console and the hands are there (Mac).
+        return kl_env_on("KL_OVRP_GL_ARRAY", t && (strcmp(t, "x6963344583787383") == 0 ||
+                                                   strcmp(t, "x3386618894743567") == 0 ||
+                                                   strcmp(t, "x2108775495884888") == 0 ||
+                                                   strcmp(t, "x2223615721048141") == 0 ||
+                                                   strcmp(t, "x2426206484098337") == 0));
     }
+}
+
+int kl_ovrp_gl_array(void) {
+    static int v = -1;
+    if (v < 0) v = kl_ovrp_gl_array_for(kl_driver_target_name());
     return v;
 }
 
@@ -1105,20 +1118,54 @@ static uint64_t klovrp_GetSystemMultiViewSupported(void) {
 // VR: Isle of Pigs fits its levels to the play area (levelScale,
 // initialPhysicalLevelScaleUp; it calls ovrp_GetBoundaryDimensions) and its
 // island did not stand in the room (2026-10-18). Default 1 for that target.
+// Vader Immortal I–III (x2108775495884888, x2223615721048141,
+// x2426206484098337) too: after the shader screen Episode I says the play
+// area is too small and wants 2 x 2 m (2026-10-19).
+//
+// The size is the MEASURED play area once the start window's room measuring
+// has one (kl_ovrp_set_play_area: the room's extent across the floor, or the
+// stationary circle's), unless KL_OVRP_BOUNDARY names a size itself. A
+// measured area also turns the answers on for every other game: a Quest with
+// a Guardian is what every one of them was made for.
+static uint64_t g_play_area;   // two floats, width and depth; 0 = none
+
+void kl_ovrp_set_play_area(float width, float depth) {
+    if (!(width > 0.0f && depth > 0.0f)) return;
+    uint32_t a, b;
+    memcpy(&a, &width, 4);
+    memcpy(&b, &depth, 4);
+    uint64_t v = (uint64_t)a | ((uint64_t)b << 32);
+    if (__atomic_exchange_n(&g_play_area, v, __ATOMIC_RELAXED) != v)
+        fprintf(stderr, "  [ovrp] Guardian: the measured play area is %.2f x %.2f m — "
+                        "reported from now on\n", (double)width, (double)depth);
+}
+
 static int klovrp_boundary(float dims[3]) {
-    static int v = -1;
+    static int v = -1, named = 0, off = 0;
     static float d[3] = { 2.0f, 2.5f, 2.0f };
     if (v < 0) {
         const char *t = kl_driver_target_name();
         const char *e = getenv("KL_OVRP_BOUNDARY");
         float w, h, z;
         if (e && sscanf(e, "%f,%f,%f", &w, &h, &z) == 3 && w > 0 && z > 0) {
-            d[0] = w; d[1] = h; d[2] = z; v = 1;
+            d[0] = w; d[1] = h; d[2] = z; v = 1; named = 1;
         } else {
-            v = kl_env_on("KL_OVRP_BOUNDARY", t && !strcmp(t, "x2718606324833775"));
+            v = kl_env_on("KL_OVRP_BOUNDARY",
+                          t && (!strcmp(t, "x2718606324833775") || !strcmp(t, "x2108775495884888") ||
+                                !strcmp(t, "x2223615721048141") || !strcmp(t, "x2426206484098337")));
+            off = e && !v;
         }
         if (v) fprintf(stderr, "  [ovrp] Guardian: reported as set up, play area %.2f x %.2f x %.2f m "
                                "(KL_OVRP_BOUNDARY)\n", d[0], d[1], d[2]);
+    }
+    uint64_t pa = named || off ? 0 : __atomic_load_n(&g_play_area, __ATOMIC_RELAXED);
+    if (pa) {
+        uint32_t a = (uint32_t)pa, b = (uint32_t)(pa >> 32);
+        float w, z;
+        memcpy(&w, &a, 4);
+        memcpy(&z, &b, 4);
+        if (dims) { dims[0] = w; dims[1] = d[1]; dims[2] = z; }
+        return 1;
     }
     if (v && dims) { dims[0] = d[0]; dims[1] = d[1]; dims[2] = d[2]; }
     return v;
@@ -7306,7 +7353,11 @@ _Static_assert(offsetof(ovrp_layer_desc_eyefov, mv_format) == 0x6c, "desc");
 // Writing the whole struct into a 1.44 guest ran 16 bytes past its desc — Star
 // Wars Pinball VR (x3180994211970184, UE 4.25) keeps it at sp+0x40 in
 // FOculusHMD::UpdateStereoRenderingParams with the stack guard at sp+0xb0, and
-// died on "stack smashing detected" at its first eye layer. KL_OVRP_EYE_DESC_SHORT
+// died on "stack smashing detected" at its first eye layer. Vader Immortal I
+// (OVRPlugin 1.30.0, UE 4.19) had no guard to trip: its 0x70-byte desc sits right
+// below the saved d8 that carries the world delta, mv_depth_format landed on it,
+// and every UWorld::Tick ran at 0.0005 s — the 16-second intro took 33,000
+// frames, five and a half minutes of black. KL_OVRP_EYE_DESC_SHORT
 // =1/0 forces either size; unset, a game whose plugin is older than 1.51 gets
 // the short one, and a game of unknown version the whole struct, as before.
 static size_t klovrp_guest_desc_size(void) {
@@ -9706,8 +9757,42 @@ static uint64_t klovrp_SetupLayer(void *device, const ovrp_layer_desc_eyefov *de
                 desc->texture_size.w, desc->texture_size.h,
                 g_eye_storage_w, g_eye_storage_h);
     int reused = l != NULL;
+    // A second eye layer while the first is still LIVE, same geometry: hand it
+    // the live layer's GL names too. Vader Immortal (UE 4.19) sets up eye
+    // layers 7 and 8 over the live layer 1 without ever destroying it; each
+    // fresh name made kl_glfb release the (eye, stage) name before it, and
+    // glGenTextures handed those freed numbers straight back for OTHER stages:
+    //
+    //   [glfb] eye=0 stage=0 replaced with no teardown (GL texture 95 -> 542)
+    //   [glfb] eye=0 stage=1 replaced with no teardown (GL texture 96 -> 95)
+    //   [glfb] eye=0 stage=0 replaced with no teardown (GL texture 542 -> 97)
+    //
+    // — GL 95 being layer 1's stage 0, layer 7's stage 1 and layer 8's stage 2
+    // in one frame, and the guest's framebuffers built on the earlier meanings.
+    // On device a stage then held a frozen picture, composited every third frame
+    // with the current pose: a flickering copy of the panel stuck to the view.
+    // Sharing the names keeps the one storage kl_glfb already has, which is all
+    // its (eye, stage) keying can describe anyway. GL path only (l->tex is
+    // empty for a Vulkan guest).
+    struct klovrp_layer *share = NULL;
+    for (int i = 0; is_eye && !l && i < KLOVRP_MAX_LAYERS && !share; i++) {
+        struct klovrp_layer *c = &g_layers[i];
+        if (!c->id || !c->is_eye || !c->tex[0][0]) continue;
+        if (c->desc.texture_size.w == desc->texture_size.w &&
+            c->desc.texture_size.h == desc->texture_size.h &&
+            c->desc.layout == desc->layout && c->desc.format == desc->format &&
+            g_eye_storage_w == desc->texture_size.w &&
+            g_eye_storage_h == desc->texture_size.h)
+            share = c;
+    }
     for (int i = 0; i < KLOVRP_MAX_LAYERS && !l; i++)
         if (!g_layers[i].id) { l = &g_layers[i]; memset(l, 0, sizeof *l); }
+    if (l && share) {
+        memcpy(l->tex, share->tex, sizeof l->tex);
+        fprintf(stderr, "  [ovrp] SetupLayer: eye layer %d is still live with the same "
+                        "%dx%d storage — the new layer shares its GL names\n",
+                share->id, desc->texture_size.w, desc->texture_size.h);
+    }
     if (!l) {
         // Table full and nothing freed. AC Nexus re-creates its overlay set on
         // every loading phase without ever destroying the old layers (measured:
