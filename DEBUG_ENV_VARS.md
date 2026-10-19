@@ -590,8 +590,11 @@ answers GL and kl_glfb never initializes.
   context is handed to the next thread that asks, which is only right while
   the guest has one context. Default 1 for `x2897337400373711` (The Walking
   Dead: Saints & Sinners), `x3484270071659289` (Tales from the Galaxy's
-  Edge) and `x5190288877703616` (The Walking Dead: Saints & Sinners -
-  Chapter 2: Retribution), else 0.
+  Edge), `x5190288877703616` (The Walking Dead: Saints & Sinners -
+  Chapter 2: Retribution) and `x2108775495884888` (Vader Immortal I: two of
+  its three eye stages were drawn into framebuffers the fresh context did not
+  have, and showed black — flickering lights and holograms; Episodes II and
+  III, `x2223615721048141` and `x2426206484098337`, likewise), else 0.
 - `KL_GLFB_COPYIMAGE_EMU=0|1` — emulate `glCopyImageSubData`, which ANGLE on
   Metal has under no name: compressed 2D uploads are kept on the CPU per
   texture and level and a copy re-uploads from there; uncompressed copies go
@@ -623,6 +626,13 @@ answers GL and kl_glfb never initializes.
 - `KL_GLFB_ZERO_STRIDE=0|1` — a `glBindVertexBuffer` binding with stride 0 is
   one element for every vertex, as ES 3.1 says, not a tightly packed array.
   Default 1.
+- `KL_GLFB_MV_DIVISOR=0|1` — a per-instance attribute set with
+  `glVertexAttribDivisor` on the default VAO steps once per view-count
+  instances while a multiview framebuffer is bound, as the ES 3.1 binding
+  translation already does. ANGLE draws two views as twice the instances; left
+  unscaled, the left eye drew the even instances and the right eye the odd
+  ones (Vader Immortal I, UE 4.19: meteors in one eye, flickering effects).
+  Default 1; 0 passes the guest's divisor through unchanged.
 - `KL_GLFB_EYE_CLEAR=0|1` — a provider-backed eye texture is cleared to opaque
   black once when it is bound, so a first frame cannot show what the memory
   held. Default 1 for Unreal guests, else 0.

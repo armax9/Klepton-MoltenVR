@@ -1742,6 +1742,13 @@ static int klovrp_title_cap(const char *t) {
         // and a frame on every second refresh (targets.py STORE_DEFAULTS). On
         // the headset: 59.3 shown of 119.5 Hz, about 3 ms of game GPU a frame.
         if (t && strcmp(t, "x3180994211970184") == 0) cap_dflt = 4608;
+        // Vader Immortal I-III (UE 4.19 on GLES): its owner asked for 4096 as the
+        // default once Episode I was verified, 2026-10-19, with 120 Hz and a
+        // frame on every second refresh (targets.py STORE_DEFAULTS). II and III
+        // are the same engine build and take the same, not yet run here.
+        if (t && (strcmp(t, "x2108775495884888") == 0 || strcmp(t, "x2223615721048141") == 0 ||
+                  strcmp(t, "x2426206484098337") == 0))
+            cap_dflt = 4096;
         // Batman: Arkham Shadow: 4608, the eye size rebelancap runs it at with
         // foveation "high" (kl_fove) — see the note on its row in
         // visionos/targets.py. Unfoveated he measured 4032 as its rung and 5120

@@ -1209,6 +1209,14 @@ STORE_DEFAULTS = {
     # second refresh — an even 60 — and 4608 an eye (klovrp_title_cap in
     # kl_ovrp.c). Both stay a player's choice in the start window.
     "x3180994211970184": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
+    # Vader Immortal: Episode I (UE 4.19, GLES). Its owner's choices, made the
+    # default when it was verified (2026-10-19): 120 Hz with a frame on every
+    # second refresh — an even 60 — and 4096 an eye (klovrp_title_cap in
+    # kl_ovrp.c). Episodes II and III are the same engine and get the same,
+    # not yet run on a headset. All stay a player's choice in the start window.
+    "x2108775495884888": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
+    "x2223615721048141": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
+    "x2426206484098337": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
 }
 
 
