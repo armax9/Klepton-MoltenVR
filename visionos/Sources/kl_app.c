@@ -322,7 +322,7 @@ static int purge_caches(const char *root, int depth) {
 // the GPU family so a restore onto different hardware counts as a change too;
 // KL_GLFB_REWRITE_GEN is our own half of what the cache holds (the blobs are
 // compiled from the text klfb_rewrite_glsl produced).
-static void shader_cache_guard(const char *files) {
+static void shader_cache_guard(const char *files, const char *target) {
     if (!kl_env_on("KL_SHADER_CACHE_GUARD", 1)) return;
 
     char want[256] = "", tmp[128];
@@ -337,6 +337,16 @@ static void shader_cache_guard(const char *files) {
     {
         size_t at = strlen(want);
         snprintf(want + at, sizeof want - at, " glsl=%d", KL_GLFB_REWRITE_GEN);
+    }
+    // ...and single-pass multiview (the Array eye layer): Unreal's programs for
+    // one cannot draw the other. Vader Immortal's blobs from its runs without
+    // multiview would otherwise outlive the switch to it (2026-10-19).
+    {
+        extern int kl_ovrp_gl_array_for(const char *);
+        if (kl_ovrp_gl_array_for(target)) {
+            size_t at = strlen(want);
+            snprintf(want + at, sizeof want - at, " mv=1");
+        }
     }
 
     char stamp[1200];
@@ -581,7 +591,7 @@ int kl_app_configure(const char *resources, const char *container) {
     mkdir(g_files, 0755);
     // Before any guest code runs, and before the guest's own file layer can
     // hand it a stale blob. See shader_cache_guard.
-    shader_cache_guard(g_files);
+    shader_cache_guard(g_files, g_target ? g_target->name : NULL);
 
     if (kl_app_target_is_steamlink()) {
         // Which front door this launch opens. The SHELL is the default because

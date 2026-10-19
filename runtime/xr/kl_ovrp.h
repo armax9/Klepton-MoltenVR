@@ -858,6 +858,9 @@ void kl_ovrp_eye_told_tangents(int eye, float tan[4]);
 int kl_ovrp_multiview(void);
 // Whether this target is served the Array eye layout on GL (see kl_ovrp.c).
 int kl_ovrp_gl_array(void);
+// The same answer for a target named by the caller, uncached: kl_app.c's
+// shader-cache fingerprint asks before the driver knows its target.
+int kl_ovrp_gl_array_for(const char *target);
 
 // ---------------------------------------------------------------------------
 // The eye view, for a guest that is not OVRPlugin's

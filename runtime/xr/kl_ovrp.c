@@ -1020,10 +1020,8 @@ static uint64_t klovrp_GetFoveationEyeTrackedSupported(int *out) {
 // overrides in either direction; kl_egl.c offers GL_OVR_multiview to the same
 // targets (klgl_want_multiview), since one without the other is a guest told it
 // may render single-pass into storage it cannot attach.
-int kl_ovrp_gl_array(void) {
-    static int v = -1;
-    if (v < 0) {
-        const char *t = kl_driver_target_name();
+int kl_ovrp_gl_array_for(const char *t) {
+    {
         // Tetris Effect: Connected (x3386618894743567, UE 4.26) is the second:
         // refused, it set its eye layer up again in every frame until all 64
         // slots were eye layers, and stayed black on the headset (2026-10-13).
@@ -1038,12 +1036,17 @@ int kl_ovrp_gl_array(void) {
         // value) — only the self-lit screen showed, on black, so there was
         // nothing to point with (his headset, 2026-10-19). With the Array
         // layer and real multiview the console and the hands are there (Mac).
-        v = kl_env_on("KL_OVRP_GL_ARRAY", t && (strcmp(t, "x6963344583787383") == 0 ||
-                                                strcmp(t, "x3386618894743567") == 0 ||
-                                                strcmp(t, "x2108775495884888") == 0 ||
-                                                strcmp(t, "x2223615721048141") == 0 ||
-                                                strcmp(t, "x2426206484098337") == 0));
+        return kl_env_on("KL_OVRP_GL_ARRAY", t && (strcmp(t, "x6963344583787383") == 0 ||
+                                                   strcmp(t, "x3386618894743567") == 0 ||
+                                                   strcmp(t, "x2108775495884888") == 0 ||
+                                                   strcmp(t, "x2223615721048141") == 0 ||
+                                                   strcmp(t, "x2426206484098337") == 0));
     }
+}
+
+int kl_ovrp_gl_array(void) {
+    static int v = -1;
+    if (v < 0) v = kl_ovrp_gl_array_for(kl_driver_target_name());
     return v;
 }
 
