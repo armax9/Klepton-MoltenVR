@@ -564,10 +564,20 @@ int kl_app_configure(const char *resources, const char *container) {
                      g_target->kind == KL_GUEST_GLES3JNI ||
                      g_target->kind == KL_GUEST_LINUX    ||
                      g_target->kind == KL_GUEST_SDL2;
-    if (!folder_fed && !have(g_assets))
-        return missing("staged assets (run stage_assets.sh)", g_assets);
     if (!folder_fed && !have(g_apk))
         return missing("staged APK (run stage_assets.sh)", g_apk);
+    // An APK with no assets/ in it at all is a correct staging, not a missing
+    // one: Vader Immortal I ships its UE4 data entirely in the OBB, apktool
+    // unpacks no assets/ dir, and both stagers stage none. Refusing here failed
+    // the launch before klepton-boot.log existed — no log, no crash report, a
+    // game that simply did not start. The tree's apktool.yml beside it says the
+    // unpack happened; an empty assets/ is then what that APK holds.
+    if (!folder_fed && !have(g_assets)) {
+        char yml[1200];
+        snprintf(yml, sizeof yml, "%s/%s/apktool.yml", container, g_target->tree);
+        if (!have(yml) || mkdir(g_assets, 0755) != 0)
+            return missing("staged assets (run stage_assets.sh)", g_assets);
+    }
     mkdir(g_files, 0755);
     // Before any guest code runs, and before the guest's own file layer can
     // hand it a stale blob. See shader_cache_guard.

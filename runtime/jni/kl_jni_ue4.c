@@ -1092,6 +1092,21 @@ static klj_val klj_GA_forceQuit(void *env, void *self, const klj_val *a, int n) 
     fprintf(stderr, "  [ue4] ForceQuit caller stack (symbolise against the guest "
                     "libUE4/libUnreal with tools/symof.py):\n");
     kl_fault_print_frames(stderr, __builtin_frame_address(0));
+    // ...and the reason itself, when the engine kept it. A Shipping build drops
+    // the log line but FDebug::AssertFailed and the fatal-error path still
+    // format their message into GErrorHist (TCHAR, 4 bytes a character on
+    // Android), and UE4 exports it. Vader Immortal I quit here with nothing
+    // printed; this buffer names the missing global shader cache file.
+    const uint32_t *hist = kl_guest_sym_global("GErrorHist");
+    if (hist && hist[0]) {
+        char msg[1024];
+        size_t k = 0;
+        for (size_t i = 0; hist[i] && k + 1 < sizeof msg; i++)
+            msg[k++] = (hist[i] >= 0x20 && hist[i] < 0x7f) || hist[i] == '\n'
+                     ? (char)hist[i] : '?';
+        msg[k] = 0;
+        fprintf(stderr, "  [ue4] ForceQuit reason (GErrorHist): %s\n", msg);
+    }
     // KL_UE4_FORCE_QUIT=1: obey it, as the Quest does. The pump ends and the
     // app leaves as for a game's own quit. On by default for Medal of Honor,
     // whose Quit button reaches ForceQuit once FEngineLoop::Exit is through
@@ -2222,6 +2237,12 @@ const klj_binding klj_bind_ue4[] = {
     {"com/epicgames/ue4/GameActivity", "AndroidThunkJava_GetNetworkConnectionType", "()I",
                                                 klj_GA_networkConnectionType},
     {"com/epicgames/ue4/GameActivity", "AndroidThunkJava_IsOculusMobileApplication",
+     "()Z", klj_GA_isOculusMobile},
+    // UE 4.19's name for the same question (its Java answers it from the same
+    // vr_only meta-data). Vader Immortal I asks it from FAndroidGPUInfo and
+    // OculusHMD's PreInit; answered 0, the game ran as a flat window app and
+    // never called OVRPlugin.
+    {"com/epicgames/ue4/GameActivity", "AndroidThunkJava_IsGearVRApplication",
      "()Z", klj_GA_isOculusMobile},
     {"com/epicgames/ue4/GameActivity", "playVideo",
      "(Ljava/lang/String;Landroid/view/Surface;)V", klj_GA_playVideo},

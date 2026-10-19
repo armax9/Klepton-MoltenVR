@@ -1859,6 +1859,77 @@ static int klfb_rewrite_int_precision(char *buf, size_t cap) {
     return 1;
 }
 
+// UE 4.19's HLSLCC passes every varying through an interface block when the
+// device names GL_EXT_shader_io_blocks (which its ES 3.1 path requires — see
+// klgl_ext_extra in kl_egl.c, Vader Immortal I):
+//   #define INTERFACE_BLOCK(Pos, Interp, Modifiers, Semantic, PreType, PostType) \
+//       layout(location=Pos) Modifiers Semantic { PreType PostType; }
+//   INTERFACE_BLOCK(0, noperspective , out , TEXCOORD0, highp vec2, Data) out_TEXCOORD0;
+//   ... out_TEXCOORD0.Data.xy = ...;
+// An in/out block is ES 3.1; at 300 es ANGLE says "interface blocks must be
+// uniform". Each block holds one member, so it is a plain varying in a wrapper:
+// the use becomes "layout(location=0) out highp vec2 out_TEXCOORD0;" and
+// "out_TEXCOORD0.Data" becomes "out_TEXCOORD0", after which the varying pass
+// pairs the two stages by location as it does for every HLSLCC shader.
+// noperspective is dropped (ES 3.0 has no such qualifier; the shaders that ask
+// for it are screen-space passes, where it changes nothing); flat and centroid
+// stay. Everything shrinks, so the edit is in place.
+static int klfb_flatten_interface_blocks(char *buf) {
+    if (!strstr(buf, "#define INTERFACE_BLOCK(Pos, Interp, Modifiers, Semantic, PreType, PostType)"))
+        return 0;
+    int changed = 0;
+    for (char *p = buf; (p = strstr(p, "INTERFACE_BLOCK(")); ) {
+        char *a = p + 16;
+        if (*a < '0' || *a > '9') { p = a; continue; }   // the #define itself
+        char *close = strchr(a, ')');
+        char *semi = close ? strchr(close, ';') : NULL;
+        if (!close || !semi) break;
+        // Six comma-separated arguments, none of which holds a comma or ')'.
+        char arg[6][64];
+        int na = 0;
+        for (char *s = a; s <= close && na < 6; na++) {
+            char *e = s;
+            while (e < close && *e != ',') e++;
+            while (s < e && (*s == ' ' || *s == '\t')) s++;
+            char *t = e;
+            while (t > s && (t[-1] == ' ' || t[-1] == '\t')) t--;
+            if ((size_t)(t - s) >= sizeof arg[0]) { na = -1; break; }
+            memcpy(arg[na], s, (size_t)(t - s)); arg[na][t - s] = 0;
+            s = e + 1;
+        }
+        char inst[64];
+        char *n = close + 1, *ne;
+        while (*n == ' ' || *n == '\t') n++;
+        for (ne = n; KLFB_IDENT(*ne); ne++) {}
+        if (na != 6 || ne == n || (size_t)(ne - n) >= sizeof inst) { p = close; continue; }
+        memcpy(inst, n, (size_t)(ne - n)); inst[ne - n] = 0;
+        // PostType may carry an array size ("Data[2]"): it moves to the name.
+        char member[64], dims[32] = "";
+        snprintf(member, sizeof member, "%s", arg[5]);
+        char *br = strchr(member, '[');
+        if (br) { snprintf(dims, sizeof dims, "%s", br); *br = 0; }
+        const char *interp = strcmp(arg[1], "noperspective") == 0 ? "" : arg[1];
+        char rep[256];
+        int rl = snprintf(rep, sizeof rep, "layout(location=%s) %s%s%s %s %s%s;",
+                          arg[0], interp, *interp ? " " : "", arg[2], arg[4], inst, dims);
+        if (rl <= 0 || rl > semi + 1 - p) { p = close; continue; }
+        memcpy(p, rep, (size_t)rl);
+        memmove(p + rl, semi + 1, strlen(semi + 1) + 1);
+        // "<inst>.<member>" -> "<inst>" everywhere after the declaration.
+        char from[160];
+        snprintf(from, sizeof from, "%s.%s", inst, member);
+        size_t fl = strlen(from), il = strlen(inst);
+        for (char *u = p + rl; (u = strstr(u, from)); ) {
+            if ((u > buf && KLFB_IDENT(u[-1])) || KLFB_IDENT(u[fl])) { u += fl; continue; }
+            memmove(u + il, u + fl, strlen(u + fl) + 1);
+            u += il;
+        }
+        p += rl;
+        changed = 1;
+    }
+    return changed;
+}
+
 static char *klfb_rewrite_glsl(char *buf, size_t cap, uint32_t shader) {
     int changed = 0;
     klfb_pin_reset(shader);
@@ -1939,6 +2010,9 @@ static char *klfb_rewrite_glsl(char *buf, size_t cap, uint32_t shader) {
             changed = 1;
         }
     }
+
+    // Before the varying pass, which then sees ordinary located varyings.
+    if (klfb_flatten_interface_blocks(buf)) changed = 1;
 
     // Varying locations (both spellings): ES 3.1 syntax on a vertex output or a
     // fragment input, which the 300 es context rejects. Needs the stage; fall
