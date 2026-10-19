@@ -1690,6 +1690,11 @@ static int klovrp_title_cap(const char *t) {
         // start window and asked for it as the default when it was verified,
         // 2026-10-18 (7-8 ms of GPU a frame at 60 a second there).
         if (t && strcmp(t, "x2401648309868679") == 0) cap_dflt = 4096;
+        // Star Wars Pinball VR (UE 4.25 on GLES): its owner chose 4608 in the
+        // start window and asked for it as the default, 2026-10-19, with 120 Hz
+        // and a frame on every second refresh (targets.py STORE_DEFAULTS). On
+        // the headset: 59.3 shown of 119.5 Hz, about 3 ms of game GPU a frame.
+        if (t && strcmp(t, "x3180994211970184") == 0) cap_dflt = 4608;
         // Batman: Arkham Shadow: 4608, the eye size rebelancap runs it at with
         // foveation "high" (kl_fove) — see the note on its row in
         // visionos/targets.py. Unfoveated he measured 4032 as its rung and 5120
