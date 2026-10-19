@@ -900,6 +900,13 @@ The guest's own memory management, and the three seams that used to disable it.
   2022.3.62f1: samplers at 99..104, its button text unreadable) and
   `x438100` (VRChat from Steam, Unity 6000.0.67f1: menu text as wrong
   shapes), else 0.
+- `KL_GLES_VERSION=<major>.<minor>` — (`runtime/guest/kl_driver.c`) the GLES
+  level described to the guest, over the per-title choice (3.2 by default; 3.0
+  for Space Channel, DreamSpace, Catan VR and Gods of Gravity). For trying a
+  title on the 3.0 profile without a build: told 3.0, Unity stays off the ES
+  3.1/3.2 paths this backend only translates (compute kernels, the separate
+  vertex-format calls, base-vertex draws). Gods of Gravity: under 3.2 its wand
+  models were drawn as large flat surfaces; under 3.0 they are right.
 - `KL_GLFB_TEX_MS_ANGLE=0|1` — (`runtime/gfx/kl_glfb.c`) serve the guest's
   `glTexStorage2DMultisample` (ES 3.1) through ANGLE's
   `glTexStorage2DMultisampleANGLE`, which an ES 3.0 context accepts. Without
