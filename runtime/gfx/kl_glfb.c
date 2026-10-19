@@ -12587,6 +12587,30 @@ static unsigned long klfb_probe_fbo(uint32_t fb, float *fbuf, uint8_t *bbuf,
             // fall through to the ordinary read, now against the staging FBO
         }
     }
+    // A multiview attachment (OVR_multiview, KL_OVRP_GL_ARRAY) cannot be read
+    // from the guest's framebuffer at all — glReadPixels answers
+    // INVALID_FRAMEBUFFER_OPERATION — so read its first view through a
+    // framebuffer of our own holding that one layer. Debug path only.
+    if (otype == 0x1702 && !resolved_via) {
+        int32_t views = 0;
+        r_GetFramebufferAttachmentParameteriv(0x8CA8, 0x8CE0,
+                                              0x9630 /* TEXTURE_NUM_VIEWS_OVR */, &views);
+        if (a_glGetError) a_glGetError();
+        static void (*r_FramebufferTextureLayer)(uint32_t, uint32_t, uint32_t, int32_t, int32_t);
+        static void (*r_GenFramebuffers3)(int32_t, uint32_t *);
+        static uint32_t layer_fb;
+        if (!r_FramebufferTextureLayer) {
+            r_FramebufferTextureLayer = asym("glFramebufferTextureLayer");
+            r_GenFramebuffers3 = asym("glGenFramebuffers");
+        }
+        if (views > 1 && r_FramebufferTextureLayer && r_GenFramebuffers3) {
+            if (!layer_fb) r_GenFramebuffers3(1, &layer_fb);
+            r_BindFramebuffer(0x8CA8, layer_fb);
+            r_FramebufferTextureLayer(0x8CA8, 0x8CE0, (uint32_t)oname, 0, 0);
+            if (aw <= 0 || ah <= 0) { aw = g_w; ah = g_h; hinted = 1; }
+            resolved_via = layer_fb;
+        }
+    }
     int32_t rfmt = 0, rtype = 0;
     a_glGetIntegerv(KLFB_IMPLEMENTATION_COLOR_READ_FORMAT, &rfmt);
     a_glGetIntegerv(KLFB_IMPLEMENTATION_COLOR_READ_TYPE, &rtype);
@@ -13030,6 +13054,22 @@ static unsigned glfb_capture_now(const char *dir) {
             } else {   // not found either: put the guest's binding back
                 a_BindFramebuffer(0x8CA8, (uint32_t)(read_fb >= 0 ? read_fb : 0));
             }
+        }
+    }
+    // A multiview eye framebuffer (KL_OVRP_GL_ARRAY) is not readable as it is
+    // (INVALID_FRAMEBUFFER_OPERATION): read the left eye's layer instead.
+    if (a_GetFbAttachmentParam && (src_fb || read_fb > 0)) {
+        int32_t views = 0, otype = 0, oname = 0;
+        if (!src_fb) a_BindFramebuffer(0x8CA8, (uint32_t)read_fb);
+        a_GetFbAttachmentParam(0x8CA8, 0x8CE0, 0x8CD0 /* OBJECT_TYPE */, &otype);
+        if (otype == 0x1702) {
+            a_GetFbAttachmentParam(0x8CA8, 0x8CE0, 0x9630 /* NUM_VIEWS_OVR */, &views);
+            a_GetFbAttachmentParam(0x8CA8, 0x8CE0, 0x8CD1 /* OBJECT_NAME */, &oname);
+        }
+        if (a_glGetError) a_glGetError();
+        if (views > 1 && oname) {
+            uint32_t lf = klfb_read_from_texture_layer((uint32_t)oname, 0);
+            if (lf) { src_fb = lf; if (src_w <= 0 || src_h <= 0 || src_w == g_w) { int32_t tw = 0, th = 0; if (klfb_tex_info((uint32_t)oname, NULL, &tw, &th) && tw > 0) { src_w = tw; src_h = th; } else if (vp[2] > 0 && vp[3] > 0) { src_w = vp[2]; src_h = vp[3]; } } }
         }
     }
 

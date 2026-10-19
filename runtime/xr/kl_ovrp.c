@@ -1031,8 +1031,18 @@ int kl_ovrp_gl_array(void) {
         // the double-wide picture UE4 then draws; this runtime can hand out the
         // array the guest asked for, and with it the game has its picture and
         // plays (owner, headset, the same day).
+        // Vader Immortal I–III (UE 4.19, cooked for mobile multiview) take
+        // DoubleWide when told no multiview and boot, but then every LIT
+        // material draws black: the console round the menu screen, the gloved
+        // hands, the title logo's red (its emissive strength read a junk
+        // value) — only the self-lit screen showed, on black, so there was
+        // nothing to point with (his headset, 2026-10-19). With the Array
+        // layer and real multiview the console and the hands are there (Mac).
         v = kl_env_on("KL_OVRP_GL_ARRAY", t && (strcmp(t, "x6963344583787383") == 0 ||
-                                                strcmp(t, "x3386618894743567") == 0));
+                                                strcmp(t, "x3386618894743567") == 0 ||
+                                                strcmp(t, "x2108775495884888") == 0 ||
+                                                strcmp(t, "x2223615721048141") == 0 ||
+                                                strcmp(t, "x2426206484098337") == 0));
     }
     return v;
 }
