@@ -1608,6 +1608,30 @@ static klj_val klj_WifiLock_isHeld(void *env, void *self, const klj_val *a, int 
     return (klj_val){.j = 1};
 }
 
+// ---- BluetoothManager and BluetoothAdapter ----
+// There is no Android Bluetooth stack on visionOS, but games query Bluetooth
+// availability on startup (e.g. DeoVR queries BluetoothManager for haptics).
+// Returning an adapter that reports isEnabled() -> false lets the game detect
+// that Bluetooth is off cleanly rather than throwing NullReferenceException.
+static klj_val klj_BluetoothManager_getAdapter(void *env, void *self, const klj_val *a, int n) {
+    (void)env; (void)self; (void)a; (void)n;
+    static void *adapter;
+    return klj_singleton("android/bluetooth/BluetoothAdapter", &adapter);
+}
+static klj_val klj_BluetoothAdapter_isEnabled(void *env, void *self, const klj_val *a, int n) {
+    (void)env; (void)self; (void)a; (void)n;
+    KLJ_LOG("BluetoothAdapter.isEnabled() -> false (no Android Bluetooth stack on this host)");
+    return (klj_val){.j = 0};
+}
+static klj_val klj_BluetoothAdapter_getState(void *env, void *self, const klj_val *a, int n) {
+    (void)env; (void)self; (void)a; (void)n;
+    KLJ_LOG("BluetoothAdapter.getState() -> 10 (STATE_OFF)");
+    return (klj_val){.j = 10};
+}
+static klj_val klj_BluetoothAdapter_getDefaultAdapter(void *env, void *self, const klj_val *a, int n) {
+    return klj_BluetoothManager_getAdapter(env, self, a, n);
+}
+
 // getSystemService returns the manager object for a service name. Returning null
 // for an unknown one is legitimate Android — a device need not offer every
 // service — so unknowns are logged rather than fabricated.
@@ -1629,6 +1653,7 @@ static klj_val klj_Context_getSystemService(void *env, void *self, const klj_val
         {"notification", "android/app/NotificationManager"},
         {"media_router", "android/media/MediaRouter"},
         {"batterymanager", "android/os/BatteryManager"},
+        {"bluetooth",    "android/bluetooth/BluetoothManager"},
         {NULL, NULL},
     };
     const char *want = n > 0 ? klj_str(a[0].l) : NULL;
@@ -2175,6 +2200,10 @@ const klj_binding klj_bind_android[] = {
      klj_WifiManager_createWifiLock},
     {"android/net/wifi/WifiManager$WifiLock", "acquire", "()V", klj_WifiLock_acquire},
     {"android/net/wifi/WifiManager$WifiLock", "isHeld",  "()Z", klj_WifiLock_isHeld},
+    {"android/bluetooth/BluetoothManager", "getAdapter", "()Landroid/bluetooth/BluetoothAdapter;", klj_BluetoothManager_getAdapter},
+    {"android/bluetooth/BluetoothAdapter", "getDefaultAdapter", "()Landroid/bluetooth/BluetoothAdapter;", klj_BluetoothAdapter_getDefaultAdapter},
+    {"android/bluetooth/BluetoothAdapter", "isEnabled", "()Z", klj_BluetoothAdapter_isEnabled},
+    {"android/bluetooth/BluetoothAdapter", "getState", "()I", klj_BluetoothAdapter_getState},
     {"android/content/Context", "getPackageCodePath", "()Ljava/lang/String;", klj_Context_getPackageCodePath},
     {"android/content/Context", "getObbDirs", "()[Ljava/io/File;", klj_Context_getObbDirs},
     {"android/content/Context", "getObbDir",  "()Ljava/io/File;",  klj_Context_getObbDir},

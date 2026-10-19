@@ -2449,6 +2449,10 @@ static const klj_field g_fields[] = {
     KLJ_FINT("android/media/AudioManager", "STREAM_MUSIC", 3),
     KLJ_FINT("android/media/AudioDeviceInfo", "TYPE_BUILTIN_SPEAKER", 2),
     KLJ_FINT("android/media/AudioDeviceInfo", "TYPE_BLUETOOTH_A2DP", 8),
+    KLJ_FINT("android/bluetooth/BluetoothAdapter", "STATE_OFF",         10),
+    KLJ_FINT("android/bluetooth/BluetoothAdapter", "STATE_TURNING_ON",  11),
+    KLJ_FINT("android/bluetooth/BluetoothAdapter", "STATE_ON",          12),
+    KLJ_FINT("android/bluetooth/BluetoothAdapter", "STATE_TURNING_OFF", 13),
     // Audio focus and AudioAttributes (AOSP values), read by the API-26
     // requestAudioFocus path in runtime/jni/kl_jni_window.c.
     KLJ_FINT("android/media/AudioManager", "AUDIOFOCUS_GAIN", 1),
