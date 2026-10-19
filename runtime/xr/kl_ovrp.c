@@ -1105,20 +1105,54 @@ static uint64_t klovrp_GetSystemMultiViewSupported(void) {
 // VR: Isle of Pigs fits its levels to the play area (levelScale,
 // initialPhysicalLevelScaleUp; it calls ovrp_GetBoundaryDimensions) and its
 // island did not stand in the room (2026-10-18). Default 1 for that target.
+// Vader Immortal I–III (x2108775495884888, x2223615721048141,
+// x2426206484098337) too: after the shader screen Episode I says the play
+// area is too small and wants 2 x 2 m (2026-10-19).
+//
+// The size is the MEASURED play area once the start window's room measuring
+// has one (kl_ovrp_set_play_area: the room's extent across the floor, or the
+// stationary circle's), unless KL_OVRP_BOUNDARY names a size itself. A
+// measured area also turns the answers on for every other game: a Quest with
+// a Guardian is what every one of them was made for.
+static uint64_t g_play_area;   // two floats, width and depth; 0 = none
+
+void kl_ovrp_set_play_area(float width, float depth) {
+    if (!(width > 0.0f && depth > 0.0f)) return;
+    uint32_t a, b;
+    memcpy(&a, &width, 4);
+    memcpy(&b, &depth, 4);
+    uint64_t v = (uint64_t)a | ((uint64_t)b << 32);
+    if (__atomic_exchange_n(&g_play_area, v, __ATOMIC_RELAXED) != v)
+        fprintf(stderr, "  [ovrp] Guardian: the measured play area is %.2f x %.2f m — "
+                        "reported from now on\n", (double)width, (double)depth);
+}
+
 static int klovrp_boundary(float dims[3]) {
-    static int v = -1;
+    static int v = -1, named = 0, off = 0;
     static float d[3] = { 2.0f, 2.5f, 2.0f };
     if (v < 0) {
         const char *t = kl_driver_target_name();
         const char *e = getenv("KL_OVRP_BOUNDARY");
         float w, h, z;
         if (e && sscanf(e, "%f,%f,%f", &w, &h, &z) == 3 && w > 0 && z > 0) {
-            d[0] = w; d[1] = h; d[2] = z; v = 1;
+            d[0] = w; d[1] = h; d[2] = z; v = 1; named = 1;
         } else {
-            v = kl_env_on("KL_OVRP_BOUNDARY", t && !strcmp(t, "x2718606324833775"));
+            v = kl_env_on("KL_OVRP_BOUNDARY",
+                          t && (!strcmp(t, "x2718606324833775") || !strcmp(t, "x2108775495884888") ||
+                                !strcmp(t, "x2223615721048141") || !strcmp(t, "x2426206484098337")));
+            off = e && !v;
         }
         if (v) fprintf(stderr, "  [ovrp] Guardian: reported as set up, play area %.2f x %.2f x %.2f m "
                                "(KL_OVRP_BOUNDARY)\n", d[0], d[1], d[2]);
+    }
+    uint64_t pa = named || off ? 0 : __atomic_load_n(&g_play_area, __ATOMIC_RELAXED);
+    if (pa) {
+        uint32_t a = (uint32_t)pa, b = (uint32_t)(pa >> 32);
+        float w, z;
+        memcpy(&w, &a, 4);
+        memcpy(&z, &b, 4);
+        if (dims) { dims[0] = w; dims[1] = d[1]; dims[2] = z; }
+        return 1;
     }
     if (v && dims) { dims[0] = d[0]; dims[1] = d[1]; dims[2] = d[2]; }
     return v;
