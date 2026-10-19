@@ -3497,6 +3497,12 @@ void *kl_ovrplat_sym(const char *name) {
     return fn;
 }
 static void *klplat_sym(const char *name, int s) {
+    // Unity IL2CPP P/Invoke probes the "W" (wide) variant first for entry points
+    // with CharSet.Auto. Android's libovrplatformloader.so does not export "W"
+    // entry points. Returning NULL lets IL2CPP fall back to the un-suffixed symbol.
+    size_t n = strlen(name);
+    if (n > 1 && name[n - 1] == 'W')
+        return NULL;
 
     // Classified at *resolve* time as well as call time, so kl_ovrplat_report can
     // show what the guest went looking for even on a run where nothing aborted.
