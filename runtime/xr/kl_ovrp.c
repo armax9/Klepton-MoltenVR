@@ -1746,12 +1746,13 @@ static int klovrp_title_cap(const char *t) {
         // default once Episode I was verified, 2026-10-19, with 120 Hz and a
         // frame on every second refresh (targets.py STORE_DEFAULTS). II and III
         // are the same engine build and take the same, not yet run here.
-        // Episode I then got the owner's later choice, read off his headset
+        // Then the owner's later choice for Episode I, read off his headset
         // (2026-10-20): 4608 an eye, rendered at 95 % and brought back to the
-        // full eye size by MetalFX (targets.py).
-        if (t && (strcmp(t, "x2223615721048141") == 0 || strcmp(t, "x2426206484098337") == 0))
-            cap_dflt = 4096;
-        if (t && strcmp(t, "x2108775495884888") == 0) cap_dflt = 4608;
+        // full eye size by MetalFX (targets.py); II and III take the same at
+        // his word.
+        if (t && (strcmp(t, "x2108775495884888") == 0 || strcmp(t, "x2223615721048141") == 0 ||
+                  strcmp(t, "x2426206484098337") == 0))
+            cap_dflt = 4608;
         // Batman: Arkham Shadow: 4608, the eye size rebelancap runs it at with
         // foveation "high" (kl_fove) — see the note on its row in
         // visionos/targets.py. Unfoveated he measured 4032 as its rung and 5120
