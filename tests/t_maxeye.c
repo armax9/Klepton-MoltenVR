@@ -96,7 +96,9 @@ int main(void) {
     ok &= kl_ovrp_title_eye_cap(ONIRI) == 0;
     ok &= kl_ovrp_title_eye_cap("x3713270985434472") == 4000;
     ok &= kl_ovrp_title_eye_cap(FLOORPLAN2) == 4096;
-    printf("%s title caps by name: Gun Club 4000, cs1 2560, Forest Oniri none, PowerWash 4000, Floor Plan 2 4096, other 3072\n", ok ? "ok  " : "FAIL");
+    ok &= kl_ovrp_title_eye_cap("x2108775495884888") == 4608;
+    ok &= kl_ovrp_title_eye_cap("x2223615721048141") == 4096;
+    printf("%s title caps by name: Gun Club 4000, cs1 2560, Forest Oniri none, PowerWash 4000, Floor Plan 2 4096, Vader Immortal I 4608 / II 4096, other 3072\n", ok ? "ok  " : "FAIL");
     ok &= run("other title, default: 3072 (3072x2465)", OTHER, 0, NULL, NULL, 3072, 2465);
     ok &= run("Gun Club, default: its own 4000 (4000x3209)", GUNCLUB, 0, NULL, NULL, 4000, 3209);
     ok &= run("Floor Plan 2, default: its own 4096 (4096x3286)", FLOORPLAN2, 0, NULL, NULL, 4096, 3286);

@@ -1214,7 +1214,11 @@ STORE_DEFAULTS = {
     # second refresh — an even 60 — and 4096 an eye (klovrp_title_cap in
     # kl_ovrp.c). Episodes II and III are the same engine and get the same,
     # not yet run on a headset. All stay a player's choice in the start window.
-    "x2108775495884888": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
+    # Episode I since 2026-10-20 has the owner's later picture settings, read
+    # off his headset: 4608 an eye (kl_ovrp.c), rendered at 95 % and upscaled
+    # to the full eye size by MetalFX (KL_METALFX_UPSCALE).
+    "x2108775495884888": {"max_rate": 120, "render_scale": 0.95,
+                          "test_on": "KL_GUEST_PACE_DIV,KL_METALFX_UPSCALE"},
     "x2223615721048141": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
     "x2426206484098337": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
 }
