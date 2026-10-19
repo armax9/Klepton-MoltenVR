@@ -633,6 +633,15 @@ static uint64_t g_root_owner;
 // given a fresh one and asked for framebuffer names from 1 again, and the view
 // stayed black with flickers of texture at 90 Hz while its sound played (on
 // device, 2026-10-17).
+// Vader Immortal I (x2108775495884888, UE 4.19) as well: its render thread
+// made the framebuffer for one or two of the three eye stages, released its
+// context, and the next thread's fresh context had no such framebuffer. Those
+// stages were never drawn — all zero in the eye dumps while the third held the
+// picture — so the eyes showed black on two frames of three: lights and
+// holograms flickered, worse at 50 Hz, and screenshots came out black now
+// and then (on device, 2026-10-19). Episodes II and III (x2223615721048141,
+// x2426206484098337) are the same engine build and are named with it, not yet
+// run here.
 //
 // The restart is the ENGINE's, not either title's, so this is a candidate for
 // every Unreal guest on GLES — but it is on for the titles it was measured with
@@ -656,7 +665,10 @@ static int klfb_shared_migrate(void) {
         on = kl_env_on("KL_GLFB_SHARED_MIGRATE",
                        t && (strcmp(t, "x2897337400373711") == 0 ||
                              strcmp(t, "x3484270071659289") == 0 ||
-                             strcmp(t, "x5190288877703616") == 0));
+                             strcmp(t, "x5190288877703616") == 0 ||
+                             strcmp(t, "x2108775495884888") == 0 ||
+                             strcmp(t, "x2223615721048141") == 0 ||
+                             strcmp(t, "x2426206484098337") == 0));
     }
     return on;
 }
@@ -9829,6 +9841,7 @@ typedef struct {
     unsigned        nvaos;
     klfb_vao_state *cur;                             // the bound VAO's state
     klfb_attr0      vao0[KLFB_VTX_ATTRS];            // what THIS context's VAO 0 holds
+    uint32_t        vao0_real_div[KLFB_VTX_ATTRS];   // ...and the divisor ANGLE was given
 } klfb_vao_ctx;
 #define KLFB_VAO_CTX ((klfb_vao_ctx *)klfb_ctx_slot(KLFB_CTX_SLOT_VAO, sizeof(klfb_vao_ctx)))
 #define g_vaos    (KLFB_VAO_CTX->vaos)
@@ -9961,8 +9974,47 @@ static void klfb_VertexAttribIPointer(uint32_t i, int32_t size, uint32_t type,
 }
 static void klfb_VertexAttribDivisor(uint32_t i, uint32_t div) {
     if (g_real_VADivisor) g_real_VADivisor(i, div);
-    if (i < KLFB_VTX_ATTRS && klfb_vao0_bound())
+    if (i < KLFB_VTX_ATTRS && klfb_vao0_bound()) {
         g_guest_vao0[i].divisor = KLFB_VAO_CTX->vao0[i].divisor = div;
+        KLFB_VAO_CTX->vao0_real_div[i] = div;
+    }
+}
+// The multiview step rate of klfb_apply_vertex_bindings, for the ES 3.0 way of
+// setting it: glVertexAttribDivisor on the default VAO. ANGLE draws a two-view
+// framebuffer as twice the instances and does not scale a per-instance
+// attribute's divisor to match, so instance k of the doubled draw reads element
+// k — the left eye gets the even instances, the right eye the odd ones, and the
+// second half reads past the end of the data. Unreal 4.19's GLES renderer sets
+// its divisors this way and never touches the ES 3.1 binding API. Vader
+// Immortal I (x2108775495884888): meteors in the right eye only, and effects
+// and holograms flickering. Scaled just before a draw into a multiview
+// framebuffer and put back for the next draw into anything else; the guest's
+// own value stays what it set. KL_GLFB_MV_DIVISOR=0 leaves it as it was.
+static void klfb_vao0_mv_divisors(void) {
+    static int on = -1;
+    if (on < 0) on = kl_env_on("KL_GLFB_MV_DIVISOR", 1);
+    if (!on || !g_real_VADivisor || !klfb_vao0_bound()) return;
+    // A default VAO driven through the format API is scaled by the translation
+    // in klfb_apply_vertex_bindings instead.
+    if (g_cur_vao && g_cur_vao->used) return;
+    uint32_t dfb = g_draw_fb;
+    unsigned views = dfb < KLFB_RESYNC_FBOS ? g_fbo_multiview[dfb] : 0;
+    if (views < 1) views = 1;
+    klfb_attr0 *c = KLFB_VAO_CTX->vao0;
+    uint32_t *real = KLFB_VAO_CTX->vao0_real_div;
+    for (unsigned i = 0; i < KLFB_VTX_ATTRS; i++) {
+        uint32_t want = c[i].divisor <= UINT32_MAX / views ? c[i].divisor * views
+                                                           : c[i].divisor;
+        if (real[i] == want) continue;
+        g_real_VADivisor(i, want);
+        real[i] = want;
+        static int said;
+        if (views > 1 && !said++)
+            fprintf(stderr, "  [glfb] instanced draw into a %u-view framebuffer (default "
+                            "VAO): per-instance attributes stepped every %u instances "
+                            "(attribute %u, divisor %u; KL_GLFB_MV_DIVISOR=0 reverts)\n",
+                    views, want, i, c[i].divisor);
+    }
 }
 static void klfb_vao0_sync(void) {
     if (!klfb_vao0_bound()) return;
@@ -9986,6 +10038,7 @@ static void klfb_vao0_sync(void) {
                 g_real_VAPointer(i, g->size, g->type, g->norm, g->stride, (const void *)g->off);
         }
         if (g_real_VADivisor) g_real_VADivisor(i, g->divisor);
+        KLFB_VAO_CTX->vao0_real_div[i] = g->divisor;
         if (g->on) g_real_EnableVAA(i); else g_real_DisableVAA(i);
         c[i] = *g;
     }
@@ -10004,6 +10057,7 @@ static void klfb_ssbo_apply(void);                 // read-only storage buffers,
 static void klfb_apply_vertex_bindings(void) {
     klfb_ssbo_apply();
     klfb_vao0_sync();
+    klfb_vao0_mv_divisors();
     klfb_vao_state *v = g_cur_vao;
     if (!v || !v->used) return;
     static void (*r_BindBuffer)(uint32_t, uint32_t);
