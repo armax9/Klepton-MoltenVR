@@ -1960,6 +1960,14 @@ puts the camera on the ground with its hands underneath it.
   `moh-exit-no-rhi-teardown` lets `FEngineLoop::Exit` through. The bounded quit
   that came with the surface around it (`KL_UE4_QUIT_LIMIT`,
   `KL_UE4_QUIT_TRACE`) is not taken.
+- `KL_UE4_CXX_ALLOC=0|1` — (`kl_ue4.c`) bind libc++_shared's own calls to
+  `operator new`/`delete` (`_Znwm`, `_Znam`, `_ZdlPv`, `_ZdaPv`) to libUE4's,
+  as bionic does, before any initializer runs. Without it libc++_shared
+  allocates with malloc and libUE4 frees inline through FMallocBinned2, which
+  raises a Fatal on the unknown block (log: *ForceQuit* with
+  `FMallocBinned2::FreeExternal` under `UnrealLogSystem::LogStream`). Default 1
+  for Zero Caliber 2 (`x6072194326150034`), else 0. Log: *"operator
+  new/delete: N slot(s) ... now take libUE4.so's"*.
 - `KL_MOH_HOVER=0|1` — Medal of Honor: Above and Beyond: the menu book and the
   telephone receivers on the Whitehall desk lift when a hand comes near. The
   game's data has that reaction off (`TurnHoverAnimsOff` true, `UseLabel`

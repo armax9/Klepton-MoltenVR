@@ -101,6 +101,11 @@ static const char *const UE4_CHAIN[] = {
     // against it, and without it in the pool the first call — Medal of Honor:
     // Above and Beyond's vx_jni_set_java_vm at start — aborted as unresolved.
     "libvivox-sdk.so",
+    // Virtuix Omni treadmill support, the same case again: libUE4 NEEDS it and
+    // binds OmniConnectShared_* against it. Absent from the pool, Zero Caliber 2
+    // (x6072194326150034) aborted on OmniConnectShared_Create right after Vivox
+    // came up. Self-contained (libc only); skipped where a guest does not ship it.
+    "libOmniConnectShared.so",
     UE4_LIB,
 };
 
@@ -639,6 +644,41 @@ int kl_ue4_configure(const char *libdir, const char *entry_lib, FILE *out) {
     return 0;
 }
 
+// libc++_shared's own calls to operator new/delete, bound to libUE4's — which is
+// where bionic binds them, libUE4 being the root of the group that loads
+// libc++_shared. Our chain binds dependencies first, so libc++_shared's slots
+// for these named its own copies (plain malloc/free) instead. Zero Caliber 2
+// (x6072194326150034) is where that mattered: the AWS SDK's log formatting
+// (Aws::InitAPI -> UnrealLogSystem::LogStream) grows an ostringstream inside
+// libc++_shared, so on its own operator new, then libUE4 frees the string inline
+// through FMallocBinned2, which does not know the block and raises a Fatal —
+// AndroidThunkJava_ForceQuit one second into the boot, and a black screen.
+// KL_UE4_CXX_ALLOC=1 for any UE4 title, =0 for the old binding.
+static void ue4_cxx_alloc_from_ue4(FILE *out) {
+    static const char *const ops[] = { "_Znwm", "_Znam", "_ZdlPv", "_ZdaPv" };
+    const char *t = kl_driver_target_name();
+    if (!kl_env_on("KL_UE4_CXX_ALLOC", t && strcmp(t, "x6072194326150034") == 0)) return;
+    kl_image *cxx = kl_find_image("libc++_shared.so");
+    if (!cxx || !g_ue4) return;
+    int moved = 0;
+    for (size_t k = 0; k < sizeof ops / sizeof *ops; k++) {
+        void *own = kl_sym(cxx, ops[k]), *ue4 = kl_sym(g_ue4, ops[k]);
+        if (!own || !ue4) continue;
+        for (size_t i = 0; i < sizeof UE4_CHAIN / sizeof *UE4_CHAIN; i++) {
+            kl_image *img = kl_find_image(UE4_CHAIN[i]);
+            if (!img || img == g_ue4) continue;
+            int n = kl_rebind(img, ops[k], own, ue4);
+            if (n > 0) moved += n;
+        }
+    }
+    if (out) {
+        fprintf(out, "  [ue4] operator new/delete: %d slot(s) that bound libc++_shared's "
+                     "own copies now take %s's, as bionic binds them (KL_UE4_CXX_ALLOC)\n",
+                moved, UE4_LIB);
+        fflush(out);
+    }
+}
+
 int kl_ue4_load(FILE *out) {
     if (out) {
         fprintf(out, "=== the chain (%zu libraries, dependencies first) ===\n",
@@ -691,6 +731,7 @@ int kl_ue4_load(FILE *out) {
         snprintf(g_err, sizeof g_err, "%s is not in the chain", g_entry_so);
         return 1;
     }
+    ue4_cxx_alloc_from_ue4(out);     // before any initializer allocates
 
     for (size_t i = 0; i < sizeof UE4_CHAIN / sizeof *UE4_CHAIN; i++) {
         char path[1200];

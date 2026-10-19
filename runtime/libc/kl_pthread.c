@@ -1210,6 +1210,10 @@ int klb_pthread_attr_setschedparam(bionic_attr *a, const int32_t *priority) {
     return 0;
 }
 int klb_pthread_attr_setstacksize(bionic_attr *a, size_t n) { a->stack_size = n; return 0; }
+int klb_pthread_attr_getstacksize(const bionic_attr *a, size_t *n) {
+    *n = a->stack_size;
+    return 0;
+}
 int klb_pthread_attr_setdetachstate(bionic_attr *a, int st) {
     if (st) a->flags |= BIONIC_ATTR_DETACHED; else a->flags &= ~BIONIC_ATTR_DETACHED;
     return 0;

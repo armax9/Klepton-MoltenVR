@@ -2146,7 +2146,7 @@ X(klb_pthread_cond_broadcast) X(klb_pthread_cond_wait) X(klb_pthread_cond_timedw
 X(klb_pthread_condattr_init) X(klb_pthread_condattr_destroy) X(klb_pthread_condattr_setclock)
 X(klb_pthread_rwlock_init) X(klb_pthread_rwlock_destroy) X(klb_pthread_rwlock_rdlock)
 X(klb_pthread_rwlock_wrlock) X(klb_pthread_rwlock_unlock)
-X(klb_pthread_attr_init) X(klb_pthread_attr_destroy) X(klb_pthread_attr_setstacksize)
+X(klb_pthread_attr_init) X(klb_pthread_attr_destroy) X(klb_pthread_attr_setstacksize) X(klb_pthread_attr_getstacksize)
 X(klb_pthread_attr_setdetachstate) X(klb_pthread_attr_getstack) X(klb_pthread_getattr_np)
 X(klb_pthread_attr_setschedpolicy) X(klb_pthread_attr_setschedparam)
 X(klb_pthread_key_create) X(klb_pthread_key_delete) X(klb_pthread_getspecific)
@@ -2638,6 +2638,7 @@ static const kl_entry g_shim[] = {
     E("pthread_attr_setschedpolicy", klb_pthread_attr_setschedpolicy),
     E("pthread_attr_setschedparam", klb_pthread_attr_setschedparam),
     E("pthread_attr_setstacksize", klb_pthread_attr_setstacksize),
+    E("pthread_attr_getstacksize", klb_pthread_attr_getstacksize),
     E("pthread_attr_setdetachstate", klb_pthread_attr_setdetachstate),
     E("pthread_attr_setinheritsched", klb_pthread_attr_setinheritsched),
     E("pthread_attr_getstack", klb_pthread_attr_getstack),

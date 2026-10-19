@@ -45,6 +45,10 @@ void      *kl_sym(kl_image *img, const char *name);
 // is how an interposer calls through. Diagnostic: nothing in a shipping path
 // registers one.
 void       kl_interpose(const char *name, void *fn);
+// Repoint the slots an image bound for `name` from `from` to `to` (late ELF
+// preemption, before its initializers run). Returns the slots moved, -1 if the
+// image has no ELF header to walk.
+int        kl_rebind(kl_image *img, const char *name, void *from, void *to);
 // Run DT_INIT_ARRAY. Separate from kl_load so tests can inspect first.
 void       kl_run_init(kl_image *img);
 void       kl_unload(kl_image *img);
