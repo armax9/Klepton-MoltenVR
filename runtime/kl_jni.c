@@ -2199,7 +2199,9 @@ static const char *klj_field_sval(const klj_field *f) {
     // from UVRUtils::GetQuestShaderPrecompilePercent, which answers 0 off a
     // Quest — the loading panel stayed for good. The flag also picks the Quest
     // device profile and the Quest branch of its materials.
-    if (t && strcmp(t, "x2108775495884888") == 0 && !strcmp(f->name, "MODEL")) return "Quest";
+    // Episodes II and III are the same engine and the same check.
+    if (t && (strcmp(t, "x2108775495884888") == 0 || strcmp(t, "x2223615721048141") == 0 ||
+              strcmp(t, "x2426206484098337") == 0) && !strcmp(f->name, "MODEL")) return "Quest";
     return f->sval;
 }
 

@@ -576,7 +576,10 @@ static const char *klgl_ext_extra(void) {
     // half-float render-target flag). Without it the engine settles on ES2,
     // asks for GlobalShaderCache-GLSL_ES2.bin, which the game never shipped,
     // and quits through LowLevelFatalError before its first frame.
-    if (g_es_major >= 3 && strcmp(t, "x2108775495884888") == 0) return "GL_EXT_shader_io_blocks";
+    // Episodes II (x2223615721048141) and III (x2426206484098337) ship the same
+    // engine build: the same "es2" APK, OVRPlugin 1.30.0, ES 3.1 cook.
+    if (g_es_major >= 3 && (strcmp(t, "x2108775495884888") == 0 || strcmp(t, "x2223615721048141") == 0 ||
+                            strcmp(t, "x2426206484098337") == 0)) return "GL_EXT_shader_io_blocks";
     // The third of the three names klgl_want_msrtt is about.
     if (g_es_major >= 3 && klgl_want_msrtt()) return "GL_EXT_multisampled_render_to_texture";
     return NULL;
