@@ -71,7 +71,17 @@ static unsigned   g_n, g_cap;
 // English banks came back, and with them the English lines (seen in a device
 // log, 2026-10-11: the 19.9 MB English VO_GameOver.bnk where the German one is
 // 21.9 MB). `dir` is that folder's name.
-typedef struct { char base[128]; char dir[48]; char obb[1024]; uint64_t lhdr, size; uint16_t method; } obb_bank;
+//
+// One folder name is not always enough. Mission: ISS ships every Wwise media
+// file twice in ONE archive: .../Android/<id>.wem from an older export and
+// .../Android/Media/<id>.wem, which the game's Wwise 2024 asks for (it carries
+// the `hash` chunk; the old copy has `JUNK` there). For the voice lines both
+// copies sit in a folder named English(US) (Android/English(US) and
+// Android/Media/English(US)), so the one-name match served the old copy, and
+// Mission Control never spoke — music, asked for under "Media", was right.
+// `dir2` is the last two folder names; a request whose two match one file's
+// gets that file before a one-name match is considered.
+typedef struct { char base[128]; char dir[48]; char dir2[96]; char obb[1024]; uint64_t lhdr, size; uint16_t method; } obb_bank;
 static obb_bank *g_bank;
 static unsigned  g_bankn, g_bankcap;
 
@@ -96,6 +106,21 @@ static void parent_name(const char *path, const char *base, char *out, size_t ca
     if (n == 0 || n >= cap) return;
     memcpy(out, start, n); out[n] = 0;
 }
+// The last two folder names: "Media/English(US)" for
+// ".../Android/Media/English(US)/x.wem", "" when there are fewer than two.
+static void parent2_name(const char *path, const char *base, char *out, size_t cap) {
+    out[0] = 0;
+    if (base <= path) return;
+    const char *end = base - 1;                       // the '/' before the basename
+    const char *start = end;
+    while (start > path && start[-1] != '/') start--; // start of the parent
+    if (start <= path + 1) return;
+    start--;                                          // the '/' before the parent
+    while (start > path && start[-1] != '/') start--; // start of the grandparent
+    size_t n = (size_t)(end - start);
+    if (n == 0 || n >= cap || *start == '/') return;
+    memcpy(out, start, n); out[n] = 0;
+}
 static void bank_add(const char *rel, const char *obbpath, uint16_t method,
                      uint64_t size, uint64_t lhdr) {
     const char *base = strrchr(rel, '/'); base = base ? base + 1 : rel;
@@ -108,14 +133,16 @@ static void bank_add(const char *rel, const char *obbpath, uint16_t method,
     obb_bank *b = &g_bank[g_bankn++];
     snprintf(b->base, sizeof b->base, "%s", base);
     parent_name(rel, base, b->dir, sizeof b->dir);
+    parent2_name(rel, base, b->dir2, sizeof b->dir2);
     snprintf(b->obb, sizeof b->obb, "%s", obbpath);
     b->method = method; b->size = size; b->lhdr = lhdr;
 }
 static obb_bank *bank_find(const char *loose) {
     const char *base = strrchr(loose, '/'); base = base ? base + 1 : loose;
     if (!name_is_bank(base)) return NULL;
-    char dir[48];
+    char dir[48], dir2[96];
     parent_name(loose, base, dir, sizeof dir);
+    parent2_name(loose, base, dir2, sizeof dir2);
     // The file of that name in the folder asked for, if there is one; otherwise
     // the first of that name, as it always was. KL_OBB_BANK_DIR=0 restores the
     // plain first match.
@@ -123,6 +150,16 @@ static obb_bank *bank_find(const char *loose) {
     if (by_dir < 0) by_dir = kl_env_on("KL_OBB_BANK_DIR", 1);
     obb_bank *first = NULL;
     unsigned same = 0;
+    if (by_dir && dir2[0])
+        for (unsigned i = 0; i < g_bankn; i++)
+            if (strcmp(g_bank[i].base, base) == 0 && strcmp(g_bank[i].dir2, dir2) == 0) {
+                static int said;
+                if (said < 3) { said++;
+                    fprintf(stderr, "  [obb] %s asked for under '%s' -> the file in that "
+                                    "folder (%llu bytes)\n", base, dir2,
+                            (unsigned long long)g_bank[i].size); }
+                return &g_bank[i];
+            }
     for (unsigned i = 0; i < g_bankn; i++) {
         if (strcmp(g_bank[i].base, base) != 0) continue;
         if (by_dir && dir[0] && strcmp(g_bank[i].dir, dir) == 0) {

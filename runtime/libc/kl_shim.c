@@ -2096,6 +2096,16 @@ static void kl_openlog(const char *a, int b, int c) { (void)a; (void)b; (void)c;
 static void kl_closelog(void) {}
 static int  kl_cxa_atexit(void (*f)(void *), void *a, void *d) { (void)f;(void)a;(void)d; return 0; }
 static void kl_cxa_finalize(void *d) { (void)d; }
+// liblog's "would this line be written?" (API 30). Every line the guest logs is
+// written here, so: yes, for anything at or above the level the caller names
+// as its default (ANDROID_LOG_DEFAULT = 1 falls back to INFO = 4, as liblog
+// does). Oboe 1.7.0 inside Mission: ISS's Meta XR Audio for Wwise asks before
+// its first stream warning; unresolved, that stopped the game.
+static int kl_android_log_is_loggable(int prio, const char *tag, int default_prio) {
+    (void)tag;
+    if (default_prio <= 1) default_prio = 4;
+    return prio >= default_prio;
+}
 static void kl_android_log_write(int p, const char *t, const char *m) {
     fprintf(stderr, "[%d/%s] %s\n", p, t ? t : "", m ? m : ""); }
 
@@ -2114,7 +2124,7 @@ X(klb_readlinkat) X(klb_renameat) X(klb_symlinkat) X(klb_utimensat) X(klb_freope
 X(klb_kill) X(klb_raise) X(klb_signal) X(klb_sigwait) X(klb_sigsuspend) X(klb_sigpending)
 X(klb___fpclassifyd) X(klb_popen) X(klb_pclose)
 X(klb_statfs64) X(klb_execlp)
-X(klb_errno) X(klb_gettid) X(klb_sysprop_find) X(klb_sysprop_get) X(klb_sysprop_read)
+X(klb_errno) X(klb_gettid) X(klb_sysprop_find) X(klb_sysprop_get) X(klb_sysprop_read) X(klb_sysprop_read_callback)
 X(klb_prctl) X(klb_sched_getaffinity) X(klb_sched_setaffinity)
 X(klb___sched_cpucount) X(klb___libc_current_sigrtmin) X(klb___libc_current_sigrtmax)
 X(klb_stat) X(klb_lstat) X(klb_fstat) X(klb_statfs) X(klb_uname) X(klb_sigaction)
@@ -2486,6 +2496,7 @@ static const kl_entry g_shim[] = {
     E("__system_property_find", klb_sysprop_find),
     E("__system_property_get", klb_sysprop_get),
     E("__system_property_read", klb_sysprop_read),
+    E("__system_property_read_callback", klb_sysprop_read_callback),
 
     // The clocks are hand-written (kl_libc.c) and must stay that way: the
     // Choreographer, System.nanoTime and the engine's frame delta all have to
@@ -2669,6 +2680,7 @@ static const kl_entry g_shim[] = {
 
     // logging / misc
     E("__android_log_write", kl_android_log_write),
+    E("__android_log_is_loggable", kl_android_log_is_loggable),
     // __android_log_vprint(prio, tag, fmt, va_list) — NOT vfprintf's shape. It
     // was bound to kl_vfprintf once, which put `prio` in the FILE* slot and
     // segfaulted in flockfile the first time Unity logged through it. The

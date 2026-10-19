@@ -404,6 +404,22 @@ void klb_sysprop_read(const void *p, char *n, char *v) {
     if (n) { if (prop) snprintf(n, 32, "%s", prop); else n[0] = 0; }
     if (v) klb_sysprop_get(prop, v);
 }
+// The API 26 form of the same read: the value comes back through a callback
+// with the name and a serial instead of into the caller's buffers. Oboe 1.7.0
+// (built into Mission: ISS's libMetaXRAudioWwise.so) reads its device quirks
+// this way right after opening its first output stream; unresolved, that
+// stopped the game with "called unresolved import". Serial 0: our values
+// never change.
+void klb_sysprop_read_callback(const void *p,
+                               void (*cb)(void *cookie, const char *name,
+                                          const char *value, uint32_t serial),
+                               void *cookie) {
+    if (!p || !cb) return;
+    const char *prop = (const char *)p;
+    char v[KLB_PROP_VALUE_MAX];
+    klb_sysprop_get(prop, v);
+    cb(cookie, prop, v, 0);
+}
 int  klb_prctl(int op, ...)                  { (void)op; return 0; }
 // Every CPU the guest is told it has (kl_cpu_count — the same number
 // sysconf(_SC_NPROCESSORS_*) and /proc/cpuinfo give), and NO others. It used to
