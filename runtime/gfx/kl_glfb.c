@@ -9813,10 +9813,14 @@ typedef struct klfb_vao_state {
 // Per context (klfb_ctx_slot): VAOs are container objects, never shared, and
 // their NAMES repeat across contexts — VAO 2 of one context is not VAO 2 of
 // another, and which one is bound is each context's own business.
+// One attribute of the DEFAULT vertex array object, as the guest last set it.
+typedef struct { uint8_t on, integer, norm; int32_t size; uint32_t type;
+                 int32_t stride; uint32_t buffer; uintptr_t off; uint32_t divisor; } klfb_attr0;
 typedef struct {
     klfb_vao_state  vaos[KLFB_MAX_VAOS];
     unsigned        nvaos;
     klfb_vao_state *cur;                             // the bound VAO's state
+    klfb_attr0      vao0[KLFB_VTX_ATTRS];            // what THIS context's VAO 0 holds
 } klfb_vao_ctx;
 #define KLFB_VAO_CTX ((klfb_vao_ctx *)klfb_ctx_slot(KLFB_CTX_SLOT_VAO, sizeof(klfb_vao_ctx)))
 #define g_vaos    (KLFB_VAO_CTX->vaos)
@@ -9890,11 +9894,108 @@ static void klfb_VertexBindingDivisor(uint32_t binding, uint32_t divisor) {
     }
 }
 
+// ---- the default VAO across a render-thread handoff ------------------------
+//
+// The guest has ONE rendering context; a thread that makes it current while
+// another still holds it gets a second ANGLE context in the same share group
+// (klfb_thread_gl, the UE4 render-thread handoff). Shared objects come along,
+// container state does not — and the default VAO is container state. Unreal
+// caches every attribute it has enabled and every pointer it has set
+// (FOpenGLContextState) and calls GL only when its cache says something
+// changed. Vader Immortal I starts its VR render thread after the loading
+// screen; on that thread's fresh context attributes 0 and 1 were never enabled,
+// Unreal's cache said they were, and every world draw read a constant position:
+// all triangles on one point, eyes black, sound playing. So the guest's view of
+// VAO 0 is kept once, and a context that holds something else is brought in
+// line before its next draw. One context throughout (the migration default)
+// never differs, and the check is a compare.
+static klfb_attr0 g_guest_vao0[KLFB_VTX_ATTRS];
+static void (*g_real_EnableVAA)(uint32_t);
+static void (*g_real_DisableVAA)(uint32_t);
+static void (*g_real_VAPointer)(uint32_t, int32_t, uint32_t, uint8_t, int32_t, const void *);
+static void (*g_real_VAIPointer)(uint32_t, int32_t, uint32_t, int32_t, const void *);
+static void (*g_real_VADivisor)(uint32_t, uint32_t);
+static int klfb_vao0_bound(void) { return !g_cur_vao || g_cur_vao->name == 0; }
+static uint32_t klfb_array_buffer(void) {
+    int32_t b = 0;
+    if (a_glGetIntegerv) a_glGetIntegerv(0x8894 /* ARRAY_BUFFER_BINDING */, &b);
+    return (uint32_t)b;
+}
+static void klfb_EnableVertexAttribArray(uint32_t i) {
+    if (g_real_EnableVAA) g_real_EnableVAA(i);
+    if (i < KLFB_VTX_ATTRS && klfb_vao0_bound())
+        g_guest_vao0[i].on = KLFB_VAO_CTX->vao0[i].on = 1;
+}
+static void klfb_DisableVertexAttribArray(uint32_t i) {
+    if (g_real_DisableVAA) g_real_DisableVAA(i);
+    if (i < KLFB_VTX_ATTRS && klfb_vao0_bound())
+        g_guest_vao0[i].on = KLFB_VAO_CTX->vao0[i].on = 0;
+}
+static void klfb_vao0_note(uint32_t i, int integer, int32_t size, uint32_t type,
+                           uint8_t norm, int32_t stride, const void *ptr) {
+    if (i >= KLFB_VTX_ATTRS || !klfb_vao0_bound()) return;
+    klfb_attr0 *g = &g_guest_vao0[i];
+    g->integer = (uint8_t)integer; g->norm = norm; g->size = size; g->type = type;
+    g->stride = stride; g->buffer = klfb_array_buffer(); g->off = (uintptr_t)ptr;
+    klfb_attr0 *c = &KLFB_VAO_CTX->vao0[i];
+    uint8_t on = c->on; uint32_t div = c->divisor;
+    *c = *g; c->on = on; c->divisor = div;
+}
+static void klfb_VertexAttribPointer(uint32_t i, int32_t size, uint32_t type, uint8_t norm,
+                                     int32_t stride, const void *ptr) {
+    if (g_real_VAPointer) g_real_VAPointer(i, size, type, norm, stride, ptr);
+    klfb_vao0_note(i, 0, size, type, norm, stride, ptr);
+}
+static void klfb_VertexAttribIPointer(uint32_t i, int32_t size, uint32_t type,
+                                      int32_t stride, const void *ptr) {
+    if (g_real_VAIPointer) g_real_VAIPointer(i, size, type, stride, ptr);
+    klfb_vao0_note(i, 1, size, type, 0, stride, ptr);
+}
+static void klfb_VertexAttribDivisor(uint32_t i, uint32_t div) {
+    if (g_real_VADivisor) g_real_VADivisor(i, div);
+    if (i < KLFB_VTX_ATTRS && klfb_vao0_bound())
+        g_guest_vao0[i].divisor = KLFB_VAO_CTX->vao0[i].divisor = div;
+}
+static void klfb_vao0_sync(void) {
+    if (!klfb_vao0_bound()) return;
+    klfb_attr0 *c = KLFB_VAO_CTX->vao0;
+    if (!memcmp(c, g_guest_vao0, sizeof g_guest_vao0)) return;
+    if (!g_real_EnableVAA || !g_real_DisableVAA || !g_real_VAPointer) return;
+    static void (*r_BindBuffer)(uint32_t, uint32_t);
+    if (!r_BindBuffer) r_BindBuffer = asym("glBindBuffer");
+    if (!r_BindBuffer) return;
+    uint32_t keep = klfb_array_buffer();
+    int n = 0;
+    for (unsigned i = 0; i < KLFB_VTX_ATTRS; i++) {
+        klfb_attr0 *g = &g_guest_vao0[i];
+        if (!memcmp(&c[i], g, sizeof *g)) continue;
+        n++;
+        if (g->size) {
+            r_BindBuffer(0x8892 /* ARRAY_BUFFER */, g->buffer);
+            if (g->integer && g_real_VAIPointer)
+                g_real_VAIPointer(i, g->size, g->type, g->stride, (const void *)g->off);
+            else
+                g_real_VAPointer(i, g->size, g->type, g->norm, g->stride, (const void *)g->off);
+        }
+        if (g_real_VADivisor) g_real_VADivisor(i, g->divisor);
+        if (g->on) g_real_EnableVAA(i); else g_real_DisableVAA(i);
+        c[i] = *g;
+    }
+    r_BindBuffer(0x8892, keep);
+    static int said;
+    if (said < 4) {
+        said++;
+        fprintf(stderr, "  [glfb] default VAO replayed on this context: %d attribute(s) "
+                        "the guest set on another (render-thread handoff)\n", n);
+    }
+}
+
 // Re-express the bound VAO's ES 3.1 attribute-binding state as ES 3.0 attribute
 // pointers, right before a draw. No-op for a VAO that never used the format API.
 static void klfb_ssbo_apply(void);                 // read-only storage buffers, below
 static void klfb_apply_vertex_bindings(void) {
     klfb_ssbo_apply();
+    klfb_vao0_sync();
     klfb_vao_state *v = g_cur_vao;
     if (!v || !v->used) return;
     static void (*r_BindBuffer)(uint32_t, uint32_t);
@@ -11566,6 +11667,11 @@ static const struct { const char *name; void *thunk; void **real; } g_thunks[] =
     {"glBindBuffer",     (void *)klfb_BindBuffer,     (void **)&g_real_BindBuffer},
     {"glBufferSubData",  (void *)klfb_BufferSubData,  (void **)&g_real_BufferSubData_t},
     {"glBindVertexArray", (void *)klfb_BindVertexArray, (void **)&g_real_BindVertexArray_vtx},
+    {"glEnableVertexAttribArray",  (void *)klfb_EnableVertexAttribArray,  (void **)&g_real_EnableVAA},
+    {"glDisableVertexAttribArray", (void *)klfb_DisableVertexAttribArray, (void **)&g_real_DisableVAA},
+    {"glVertexAttribPointer",      (void *)klfb_VertexAttribPointer,      (void **)&g_real_VAPointer},
+    {"glVertexAttribIPointer",     (void *)klfb_VertexAttribIPointer,     (void **)&g_real_VAIPointer},
+    {"glVertexAttribDivisor",      (void *)klfb_VertexAttribDivisor,      (void **)&g_real_VADivisor},
     {"glVertexAttribFormat",  (void *)klfb_VertexAttribFormat,  (void **)&g_real_VtxAttribFormat},
     {"glVertexAttribIFormat", (void *)klfb_VertexAttribIFormat, (void **)&g_real_VtxAttribIFormat},
     {"glVertexAttribBinding", (void *)klfb_VertexAttribBinding, (void **)&g_real_VtxAttribBinding},
