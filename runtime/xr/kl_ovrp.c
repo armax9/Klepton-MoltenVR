@@ -9593,8 +9593,42 @@ static uint64_t klovrp_SetupLayer(void *device, const ovrp_layer_desc_eyefov *de
                 desc->texture_size.w, desc->texture_size.h,
                 g_eye_storage_w, g_eye_storage_h);
     int reused = l != NULL;
+    // A second eye layer while the first is still LIVE, same geometry: hand it
+    // the live layer's GL names too. Vader Immortal (UE 4.19) sets up eye
+    // layers 7 and 8 over the live layer 1 without ever destroying it; each
+    // fresh name made kl_glfb release the (eye, stage) name before it, and
+    // glGenTextures handed those freed numbers straight back for OTHER stages:
+    //
+    //   [glfb] eye=0 stage=0 replaced with no teardown (GL texture 95 -> 542)
+    //   [glfb] eye=0 stage=1 replaced with no teardown (GL texture 96 -> 95)
+    //   [glfb] eye=0 stage=0 replaced with no teardown (GL texture 542 -> 97)
+    //
+    // — GL 95 being layer 1's stage 0, layer 7's stage 1 and layer 8's stage 2
+    // in one frame, and the guest's framebuffers built on the earlier meanings.
+    // On device a stage then held a frozen picture, composited every third frame
+    // with the current pose: a flickering copy of the panel stuck to the view.
+    // Sharing the names keeps the one storage kl_glfb already has, which is all
+    // its (eye, stage) keying can describe anyway. GL path only (l->tex is
+    // empty for a Vulkan guest).
+    struct klovrp_layer *share = NULL;
+    for (int i = 0; is_eye && !l && i < KLOVRP_MAX_LAYERS && !share; i++) {
+        struct klovrp_layer *c = &g_layers[i];
+        if (!c->id || !c->is_eye || !c->tex[0][0]) continue;
+        if (c->desc.texture_size.w == desc->texture_size.w &&
+            c->desc.texture_size.h == desc->texture_size.h &&
+            c->desc.layout == desc->layout && c->desc.format == desc->format &&
+            g_eye_storage_w == desc->texture_size.w &&
+            g_eye_storage_h == desc->texture_size.h)
+            share = c;
+    }
     for (int i = 0; i < KLOVRP_MAX_LAYERS && !l; i++)
         if (!g_layers[i].id) { l = &g_layers[i]; memset(l, 0, sizeof *l); }
+    if (l && share) {
+        memcpy(l->tex, share->tex, sizeof l->tex);
+        fprintf(stderr, "  [ovrp] SetupLayer: eye layer %d is still live with the same "
+                        "%dx%d storage — the new layer shares its GL names\n",
+                share->id, desc->texture_size.w, desc->texture_size.h);
+    }
     if (!l) {
         // Table full and nothing freed. AC Nexus re-creates its overlay set on
         // every loading phase without ever destroying the old layers (measured:
