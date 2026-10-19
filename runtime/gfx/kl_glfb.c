@@ -9128,7 +9128,15 @@ static int klfb_cimg_on(void) {
              // The Walking Dead: Saints & Sinners - Chapter 2: Retribution
              // (x5190288877703616, UE 4.27.2) is the sixth: once it drew,
              // all its textures were purple (on device, 2026-10-17).
-             kl_env_on("KL_GLFB_COPYIMAGE_EMU", t && (strcmp(t, "x2897337400373711") == 0 ||
+             // Vader Immortal I–III (x2108775495884888, x2223615721048141,
+             // x2426206484098337, UE 4.19) next: the title logo's stone texture
+             // read as solid magenta — all-zero ASTC blocks, the decoder's
+             // error colour — so the logo came out pink instead of grey stone
+             // with red edges (his headset, 2026-10-19; Mac, texture dump).
+             kl_env_on("KL_GLFB_COPYIMAGE_EMU", t && (strcmp(t, "x2108775495884888") == 0 ||
+                                                      strcmp(t, "x2223615721048141") == 0 ||
+                                                      strcmp(t, "x2426206484098337") == 0 ||
+                                                      strcmp(t, "x2897337400373711") == 0 ||
                                                       strcmp(t, "x3484270071659289") == 0 ||
                                                       strcmp(t, "x6963344583787383") == 0 ||
                                                       strcmp(t, "x3386618894743567") == 0 ||
