@@ -1548,6 +1548,52 @@ void *kl_sym(kl_image *img, const char *name) {
     return NULL;
 }
 
+// Repoint the slots `img` bound for `name` from `from` to `to`, after the fact.
+// This is ELF symbol preemption done late: our chain binds each library as it
+// loads, dependencies first, so a symbol a dependency DEFINES binds to its own
+// copy — where bionic, binding the whole group at once, would hand it the copy
+// in the library that pulled it in. Only slots still holding `from` move, so a
+// slot an interposer or a shim claimed stays where it is. RELA and JMPREL only:
+// the import slots live there; RELR and APS2 are relative-only here. Must run
+// before the guest's initializers do. Returns the number of slots moved.
+int kl_rebind(kl_image *img, const char *name, void *from, void *to) {
+    const Elf64_Ehdr *eh = (const Elf64_Ehdr *)img->base;
+    if (memcmp(eh->e_ident, "\x7f" "ELF", 4) != 0) return -1;
+    const Elf64_Phdr *ph = (const Elf64_Phdr *)(img->base + eh->e_phoff);
+    uint64_t lo = UINT64_MAX;
+    for (int i = 0; i < eh->e_phnum; i++)
+        if (ph[i].p_type == PT_LOAD && ph[i].p_vaddr < lo) lo = ph[i].p_vaddr;
+    const Elf64_Rela *tab[2] = { NULL, NULL };
+    size_t cnt[2] = { 0, 0 };
+    for (int i = 0; i < eh->e_phnum; i++) {
+        if (ph[i].p_type != PT_DYNAMIC) continue;
+        for (const Elf64_Dyn *dp = (const Elf64_Dyn *)(img->base + ph[i].p_vaddr - lo);
+             dp->d_tag != DT_NULL; dp++)
+            switch (dp->d_tag) {
+            case DT_RELA:     tab[0] = (const Elf64_Rela *)(img->base + dp->d_val); break;
+            case DT_RELASZ:   cnt[0] = dp->d_val / sizeof(Elf64_Rela); break;
+            case DT_JMPREL:   tab[1] = (const Elf64_Rela *)(img->base + dp->d_val); break;
+            case DT_PLTRELSZ: cnt[1] = dp->d_val / sizeof(Elf64_Rela); break;
+            }
+    }
+    int moved = 0;
+    for (int t = 0; t < 2; t++) {
+        if (!tab[t]) continue;
+        for (size_t i = 0; i < cnt[t]; i++) {
+            const Elf64_Rela *r = &tab[t][i];
+            uint32_t type = ELF64_R_TYPE(r->r_info), sidx = ELF64_R_SYM(r->r_info);
+            if (!sidx || (type != R_AARCH64_JUMP_SLOT && type != R_AARCH64_GLOB_DAT &&
+                          type != R_AARCH64_ABS64)) continue;
+            if (strcmp(img->strtab + img->symtab[sidx].st_name, name) != 0) continue;
+            uint64_t *slot = (uint64_t *)(img->base + r->r_offset);
+            if (*slot != (uint64_t)(uintptr_t)from + (uint64_t)r->r_addend) continue;
+            *slot = (uint64_t)(uintptr_t)to + (uint64_t)r->r_addend;
+            moved++;
+        }
+    }
+    return moved;
+}
+
 void kl_unload(kl_image *img) {
     if (!img) return;
     if (img->dl_handle) dlclose(img->dl_handle);   // translated: dyld owns it
