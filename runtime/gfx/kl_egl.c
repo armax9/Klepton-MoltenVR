@@ -654,8 +654,14 @@ static const char *klgl_identity(int renderer) {
     // Android profile and stopped at "This device does not support Vulkan"
     // (headset log 2026-10-18); as the Quest 2's GPU it opens a Vulkan device
     // (Mac host, the same day).
+    // Propagation: Paradise Hotel (x8826022237415280, UE 4.27.2 PICO branch)
+    // the same: every profile in its BaseDeviceProfiles.ini that clears
+    // DisableVulkanSupport is gated on SRC_GpuFamily matching Adreno, Mali or
+    // PowerVR, the package has no ES 3.1, and as "Klepton GLES" it stopped at
+    // "This device does not support Vulkan" (headset log 2026-10-19).
     if (kl_driver_target_is_moss() || (t && (strcmp(t, "x2897337400373711") == 0 ||
-              strcmp(t, "x5190288877703616") == 0)))
+              strcmp(t, "x5190288877703616") == 0 ||
+              strcmp(t, "x8826022237415280") == 0)))
         return renderer ? "Adreno (TM) 650" : "Qualcomm";
     // Vampire: The Masquerade - Justice asks the same string which headset it
     // is on: UJukeboxBlueprintLibrary::ResolveHMD sets Quest 1, 2 or 3 from
