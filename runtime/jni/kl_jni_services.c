@@ -1705,6 +1705,17 @@ static klj_val klj_Context_getExternalFilesDir(void *env, void *self, const klj_
     KLJ_LOG("getExternalFilesDir(%s) -> %s", type ? type : "null", path);
     return (klj_val){.l = klj_new_file(path)};
 }
+// getExternalFilesDirs(type): plural form of getExternalFilesDir(type), introduced in
+// Android 4.4 for multi-volume support. On a system with one external storage volume,
+// it returns a one-element array containing getExternalFilesDir(type).
+// DeoVR (x2382576078453818) calls this to inspect storage paths; without this binding
+// the call answers null, causing a NullReferenceException ("Error get SDCard path!").
+static klj_val klj_Context_getExternalFilesDirs(void *env, void *self, const klj_val *a, int n) {
+    klj_val single = klj_Context_getExternalFilesDir(env, self, a, n);
+    void *arr = klj_new_array('L', "java/io/File", 1);
+    ((void **)klj_arr(arr)->data)[0] = single.l;
+    return (klj_val){.l = arr};
+}
 static klj_val klj_Context_getFilesDir(void *env, void *self, const klj_val *a, int n) {
     (void)env; (void)self; (void)a; (void)n;
     return (klj_val){.l = klj_new_file("/sdcard/files")};   // short form; see getExternalFilesDir
@@ -2845,6 +2856,7 @@ const klj_binding klj_bind_services[] = {
     {"com/vuplex/webview/WebView3D", "setAutoplayEnabled", "(Z)V", klj_Vuplex_setting},
     {"com/vuplex/webview/WebView3D", "setDrmEnabled", "(Z)V", klj_Vuplex_setting},
     {"com/vuplex/webview/WebView3D", "globallySetUserAgent", "(Ljava/lang/String;)V", klj_Vuplex_setting},
+    {"com/vuplex/webview/WebView3D", "globallySetUserAgent", "(Z)V", klj_Vuplex_setting},
     {"com/vuplex/webview/WebView3D", "resumeAll", "()V", klj_Vuplex_setting},
     {"com/vuplex/webview/WebView3D", "isWebViewAvailable", "()Z", klj_Vuplex_isWebViewAvailable},
     // The Voice SDK's telemetry connection (see klj_VoiceLogger_getService):
@@ -2937,6 +2949,7 @@ const klj_binding klj_bind_services[] = {
     {"org/libsdl/app/SDLActivity", "getAssets", "(Z)Landroid/content/res/AssetManager;", klj_Context_getAssets},
     {"org/libsdl/app/SDLActivity", "getAssetsList", "(ZLjava/lang/String;)[Ljava/lang/String;", klj_SDLActivity_getAssetsList},
     {"android/content/Context", "getExternalFilesDir", "(Ljava/lang/String;)Ljava/io/File;", klj_Context_getExternalFilesDir},
+    {"android/content/Context", "getExternalFilesDirs", "(Ljava/lang/String;)[Ljava/io/File;", klj_Context_getExternalFilesDirs},
     {"android/content/Context", "getFilesDir", "()Ljava/io/File;", klj_Context_getFilesDir},
     {"android/content/Context", "getCacheDir", "()Ljava/io/File;", klj_Context_getCacheDir},
     {"android/content/Context", "getExternalCacheDir", "()Ljava/io/File;",
