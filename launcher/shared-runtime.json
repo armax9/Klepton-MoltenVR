@@ -1,0 +1,62 @@
+{
+  "id": "moltenvr-macos-v0.1.0",
+  "executable": "bin/runtime",
+  "sha256": "b74000a1a35ebddc36506171cc6677a7d8fba009e238bf27f283b8d502830e77",
+  "environment": {
+    "KL_ALARM": "0",
+    "KL_MOLTENVR_COMPOSITE_PANELS": "1",
+    "KL_MOLTENVR_NATIVE_CONE": "1",
+    "KL_MOLTENVR_RECENTER_WATCH": "1",
+    "KL_VK_VIN_SEPARATE_OFFSETS": "1",
+    "KL_VK_VIDEO_IMPORT": "1",
+    "KL_MEDIA_EXTRACTOR": "1",
+    "KL_VTDEC_BGRA": "1",
+    "KL_NET_OFFLINE": "1",
+    "KL_VK_EYE_CHECK": "0"
+  },
+  "shared_fixes": [
+    "Per-eye display-ray remapping",
+    "Recenter event delivery",
+    "Oculus achievement pagination",
+    "Missing vertex input offset separation",
+    "Android video buffer import",
+    "Retired texel-source lifetime protection (when texel emulation is active)",
+    "Explicit original APK path for measured targets",
+    "OpenXR GLES swapchain texture-binding restoration",
+    "Unity OpenXR multisample capability routing",
+    "OpenXR image-slot and completed-pose pairing",
+    "MediaCodec video format-change delivery and drained EOS output",
+    "Head and eye transforms from one native stereo snapshot",
+    "Bounded MediaCodec buffer-mode playback independent of game identity",
+    "Register GLES array swapchain eyes once per eye, not every display frame",
+    "Wake native Android Looper after cross-thread descriptor registration and retire zero-returning callbacks",
+    "Bounded surface video playback selected by finite media duration",
+    "LOCAL_FLOOR supported for all negotiated OpenXR 1.1 guests",
+    "Projection list and immutable completed pose published as one snapshot"
+  ],
+  "exceptions": "Measured driver/guest ABI requirements remain in profiles.json; no package selects its own executable.",
+  "components": {
+    "angle": {
+      "directory": "graphics/angle",
+      "files": {
+        "libEGL.dylib": "2ce7ebcdb842b5b665d17e639ce6396eb097acfc2d4f26962a29176e61d99aa6",
+        "libGLESv2.dylib": "17230f7e5a350268170cc0ec11315134de9b0ac941b1685f2c59d7d35ad6775a"
+      },
+      "sourceCommit": "25e721127e1c6c4c6fa0182b5c234b2c88971175",
+      "patchSha256": "2fedc67f66988b2fbe42643c971beafbefa2005560cb3d70e5ca7808698f7fb3"
+    },
+    "moltenvk": {
+      "directory": "graphics/moltenvk",
+      "files": {
+        "libMoltenVK.dylib": "b3f5c74353dd2e95360809f8a73e36001ad6ed399e68b701d386821ba9eac8fa"
+      },
+      "sourceCommit": "5189f8de86ec365860f63bf1da736815cfaea5cd"
+    },
+    "sdl3": {
+      "directory": "lib",
+      "files": {
+        "libSDL3.0.dylib": "31e645c75a050caf008f50482717c6ae9105472a7a84199a5a5ce245b1cc8160"
+      }
+    }
+  }
+}

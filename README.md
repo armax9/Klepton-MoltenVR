@@ -1,91 +1,97 @@
-# Klepton
+# Klepton for macOS + MoltenVR
 
-Running Android ARM64 VR APKs on Apple Vision Pro, no JIT required!
+Play Quest games on your Apple Silicon Mac and stream them to your headset with [MoltenVR](https://github.com/MoltenVR/MoltenVR-Preview).
 
-## This fork: the AVP Play toolchain
+This fork brings [Klepton](https://github.com/shinyquagsire23/Klepton), through [myMartek’s AVP Play fork](https://github.com/myMartek/Klepton/tree/avp-play), to a native macOS game library with MoltenVR support. Pick your games folder, choose a game, and click **Launch in VR**.
 
-This is the Klepton fork that [AVP Play](https://github.com/myMartek/avp-play) builds games with. The branch `avp-play` carries one commit per toolchain that shipped with an AVP Play release, on top of upstream [`shinyquagsire23/Klepton`](https://github.com/shinyquagsire23/Klepton) at `ce74582`, each tagged `toolchain-N`. Such a commit is the source in the `klepton-toolchain-N-<hash>.tar.gz` attached to that release; the hash in its subject and the short hashes in its message are the ones AVP Play's recipes name as `toolchain.minCommit`.
+On my **M3 Max + Quest 3**, several tested games deliver a sharper picture and high frame rates at resolutions above their standalone Quest settings. Using the Mac’s GPU makes a real difference. Compatibility is still developing: individual games need their own fixes and tuning.
 
-Day-to-day work happens in a private tree and lands here with each release, so the history is coarse. Pull requests against `avp-play` are welcome: a merged change is carried into the working tree and is part of the next toolchain. Reports about a game belong in [AVP Play's issues](https://github.com/myMartek/avp-play/issues).
+## What you need
 
-`main` follows upstream unchanged.
+- An Apple Silicon Mac running macOS 26 or later.
+- MoltenVR installed and connected to your Quest headset and controllers.
+- Your own ARM64 Quest APKs and their OBB / additional game data.
+- Homebrew. The installer installs Python 3 through Homebrew if needed.
 
-## Architecture
+## Install and play
 
-`klepton-ld` translates Android `.so` libraries into loadable Apple `.dylib` and `.framework` libraries, which then link into the Klepton runtime. Klepton currently focuses on Java-thin applications only (no ART, no JVM).
+1. Download **APK-VR-Library-macOS-arm64-v0.1.0.zip** from Releases and extract it.
+2. Keep the entire **APK VR Library** folder together. Move it wherever you want.
+3. Run **Install.command** once. Then open **APK VR Library.app**.
+4. Start MoltenVR and connect your headset.
+5. Click **Choose Folder…**, select your games folder, and click **Launch in VR** next to a game.
 
-For graphics, GLES 3.2 is translated to a vendored ANGLE GLES 3.0 (with its Metal backend), and Vulkan is translated to MoltenVK.
+Keep each APK and its expansion files together, for example:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  GUEST (translated Mach-O, instruction bytes mostly unmodified) │
-│  libil2cpp · libunity · libunityopus · libmain · burst · ...    │
-└─────────────────────────────────────────────────────────────────┘
-    ↕ imports resolved to Klepton runtime in `klepton-ld`
-┌─────────────────────────────────────────────────────────────────┐
-│  libklepton_bionic   libc/libm/libdl/pthread/liblog → libSystem │
-│  libklepton_ndk      ALooper · ANativeWindow · ASensor · AAsset │ 
-│  libklepton_jni      synthetic JavaVM / JNIEnv                  │
-│  libklepton_ovrp     ovrp_* reimplementation                    │
-│  ...                                                            │
-└─────────────────────────────────────────────────────────────────┘
-    ↕ Frontend platform (`mains`) and OS-specifics
-┌─────────────────────────────────────────────────────────────────┐
-│  MoltenVK (Vulkan → Metal)     ANGLE (GLES 3.0)                 │
-│  Compositor Services · ARKit · GameController · AVAudioEngine   │
-└─────────────────────────────────────────────────────────────────┘
+```text
+My Quest Games/
+  My Game/
+    game.apk
+    Android/obb/com.example.game/
+      main.123.com.example.game.obb
+      additional game files
 ```
 
-While both Android and macOS reserve x18, some (a lot of) older Android applications still use x18, and macOS zeros x18 on context switches. All usage of x18 is patched by `klepton-ld` so that per-library TLS slots are used instead.
+The library scans subfolders automatically and uses folder names as game titles. OBB files and loose game data are linked automatically. Keep the original game folders after adding them. Use **Stop Game** before launching another game.
 
-Klepton also has the ability to load and patch `.so` files at runtime with `mmap`, but this is only really useful on macOS where JIT is actually allowed. It's likely that some applications will require JIT if they happen to utilize scripting runtimes that expect it (LuaJIT, V8, whatever else).
+Saves, extracted files, and shader caches live in `~/Library/Application Support/APK VR Library`. Later launches reuse those caches. The first launch can take longer while shaders compile.
 
-## Building
+## Tested on macOS with MoltenVR
 
-See [`BUILDING.md`](BUILDING.md) for the full guide. The short version:
+These games were tested here and reached working gameplay:
 
-```bash
-brew install pkg-config sdl3 apktool          # host dependencies
-apktool d -f -o beatsaber beatsaber.apk       # you supply the APK; see BUILDING.md
-make check                                    # full regression sweep
-```
+- Walkabout Mini Golf
+- Batman: Arkham Shadow
+- Assassin’s Creed Nexus VR
+- Alien: Rogue Incursion
+- BONELAB
+- Syberia VR — including 4× MSAA
+- Vampire: The Masquerade – Justice
 
-Quick run scripts:
+Open Brush was also used to validate the native OpenXR connection. Wanderer: The Fragments of Fate reaches gameplay but still needs work. Beat Saber needs further head-motion tuning; Demeo and Into the Radius 2 are still being brought up.
 
-```bash
-./build_run_viewer.sh [target] # build and run macOS frontend
-./build_run_vpro.sh [target]  # build and run Vision Pro frontend
-./build_run_host.sh [target]  # build and run a guest headless, with a summary
-./build_run_host.sh steamlink-vr --shell --view  # Steam VR Link frontend (WIP)
-```
+## More games supported upstream
 
-Where `[target]` is the name of the target, defaulting to `beatsaber`.
+The [original Klepton compatibility list](https://github.com/shinyquagsire23/Klepton#status) reports the following games working on macOS / visionOS:
 
-## Status
-
-Currently working well on both macOS and visionOS with minor-to-no graphical issues:
-
-- Beat Saber versions 1.6, 1.28, and 1.40
+- Beat Saber 1.6, 1.28, and 1.40
 - BONELAB
 - SUPERHOT VR
 - Resident Evil 4 VR
-- OpenBrush (OpenXR)
+- Open Brush (OpenXR)
 - OpenJK XR (Team Beef)
-- Counter Strike
-- Half Life
-- Half Life 2
+- Counter-Strike
+- Half-Life
+- Half-Life 2
 - Portal
 - Vice City
 - Into the Radius
 - Red Matter 2
-- Vampire: The Masquerade - Justice
+- Vampire: The Masquerade – Justice
 
-WIP or not in a great state:
+This fork carries the existing Klepton compatibility code and the game fixes and profiles from [myMartek’s AVP Play branch](https://github.com/myMartek/Klepton/tree/avp-play), alongside the macOS / MoltenVR additions. Those fixes come from the upstream projects; they were not recreated here.
 
-- Steam VR Link (no AWDL mitigations due to entitlement restrictions, XR_EXT_hand_tracking not implemented yet)
-- Xbox Cloud Gaming — a separate build that is essentially a web app (a PWA wrapper around the streaming client), not a translated APK
-- ZIX
+Games in this upstream list are additional candidates to try. The **Tested on macOS with MoltenVR** list above identifies the games checked with this headset connection. Game versions and individual features can still need tuning.
 
-Abandoned due to anticheat, JIT mmaping, or other problems:
+## What this fork adds
 
-- VRChat (Steam Frame APK)
+- A native Mac game library with folder scanning, launch / stop controls, and compatibility badges.
+- A native Metal / OpenXR connection to MoltenVR for stereo rendering, head and controller tracking, and haptics.
+- Correct eye-image routing and field-of-view mapping, plus composition of game panels and overlays.
+- Automatic Unity / Unreal engine detection and package-specific game profiles.
+- APK manifest decoding, OBB discovery, separate saves, and reusable per-game pipeline caches.
+- macOS graphics and media integration through MoltenVK, ANGLE, and VideoToolbox.
+- Shared fixes for game lifecycle, Android event delivery, video buffers, OpenXR capabilities, and frame / pose pairing.
+- Game-specific rendering fixes, including the Syberia MSAA image-lifetime fix that stops GPU memory growing indefinitely.
+
+The release includes the runtime, graphics libraries, profiles, and launcher. Games run on the Mac; MoltenVR handles the headset connection. No CrossOver or OpenComposite is required. Game content is not included.
+
+## Development
+
+Runtime source is in `source/`; the Mac launcher and profiles are in `launcher/`. See [BUILDING.md](BUILDING.md) for build and packaging details. Source diagnostics remain available to developers but are disabled in the player release; it does not write a continuous game log.
+
+## Credits
+
+[Max Thomas / shinyquagsire23](https://github.com/shinyquagsire23/Klepton) created Klepton. [myMartek](https://github.com/myMartek/Klepton) maintains the AVP Play toolchain and game recipes used as this fork’s starting point. [MoltenVR](https://github.com/MoltenVR/MoltenVR-Preview) provides the Mac-to-headset runtime and streaming connection. This fork adds the macOS launcher and MoltenVR integration described above.
+
+Klepton is MIT licensed. Third-party notices are included with the source and binary release.

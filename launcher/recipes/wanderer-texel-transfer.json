@@ -1,0 +1,9 @@
+{
+  "package": "com.MightyEyes.Wanderer",
+  "status": "loading-screen-tested",
+  "runtime_sha256": "0957bc22d14dc10abe93f091ebb2046ae1382aba0b73a3005014ef5000f95466",
+  "problem": "Texel-buffer emulation emitted transfers during a render pass, triggering Metal encoder validation failures.",
+  "change": "Collect used texel mirrors per command buffer and copy them before the legacy queue submission, outside render passes. Keep attachment backing non-transient.",
+  "validation": "Loading panel rendered with Metal API Validation enabled; no encoder assertion during the 60-second test. Menu and gameplay remain unverified.",
+  "scope": "Wanderer only. GPU-written sources within the same guest command buffer and QueueSubmit2 are not covered by this workaround."
+}

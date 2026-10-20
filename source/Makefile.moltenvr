@@ -1,0 +1,61 @@
+include Makefile
+XR_INC := -Ithird_party/openxr/include -Ithird_party/openxr/include/openxr
+MVR_CFLAGS := $(CFLAGS) -Iruntime/linux -include runtime/kl_host_compat.h $(shell pkg-config --cflags sdl3)
+MVR_SRCS := mains/m_boot.c tests/t_mtl_provider.m $(RUNTIME) runtime/gfx/kl_moltenvr.mm runtime/kl_host_compat.c $(FZ_SRC) $(FZ_DIR)/miniz/miniz.c
+MVR_OBJS := $(addprefix build/moltenvr/,$(addsuffix .o,$(MVR_SRCS)))
+build/moltenvr/%.c.o: %.c $(RUNTIME_ALL_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(MVR_CFLAGS) -c $< -o $@
+build/moltenvr/%.S.o: %.S
+	@mkdir -p $(dir $@)
+	$(CC) $(MVR_CFLAGS) -c $< -o $@
+build/moltenvr/%.m.o: %.m $(RUNTIME_ALL_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(MVR_CFLAGS) -fobjc-arc -c $< -o $@
+build/moltenvr/%.cpp.o: %.cpp $(RUNTIME_ALL_HDRS)
+	@mkdir -p $(dir $@)
+	xcrun clang++ $(MVR_CFLAGS) $(FZ_INC) -std=c++17 -fno-exceptions -Wno-deprecated-declarations -c $< -o $@
+build/moltenvr/%.mm.o: %.mm $(RUNTIME_ALL_HDRS)
+	@mkdir -p $(dir $@)
+	xcrun clang++ $(MVR_CFLAGS) $(XR_INC) -std=c++17 -fobjc-arc -c $< -o $@
+build/openbrush-moltenvr build/openbrush-moltenvr-quest-pose build/openbrush-moltenvr-panels build/openbrush-moltenvr-batman-angle build/openbrush-moltenvr-loading build/openbrush-moltenvr-video build/openbrush-moltenvr-continue-check build/openbrush-moltenvr-loading-independent build/openbrush-moltenvr-quest-native build/openbrush-moltenvr-panorama build/openbrush-moltenvr-fastnet-recenter build/openbrush-moltenvr-wanderer build/openbrush-moltenvr-unreal-native build/openbrush-moltenvr-recenter-origin build/openbrush-moltenvr-syberia build/openbrush-moltenvr-syberia-eyeorder build/openbrush-moltenvr-syberia-nativecone build/openbrush-moltenvr-syberia-memory build/openbrush-moltenvr-syberia-memorycensus build/openbrush-moltenvr-syberia-msaa build/openbrush-moltenvr-syberia-pool build/openbrush-moltenvr-syberia-leakdebug build/openbrush-moltenvr-syberia-cachefix build/openbrush-moltenvr-syberia-resourcetrace build/openbrush-moltenvr-syberia-depthrelease build/openbrush-moltenvr-syberia-viewrelease build/openbrush-moltenvr-unreal-repair build/openbrush-moltenvr-alien-diagnostic build/openbrush-moltenvr-shared: $(MVR_OBJS)
+	xcrun clang++ -arch arm64 -g -o $@ $(MVR_OBJS) $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+build/video-import-test: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_video_import.c.o build/moltenvr/tests/t_video_pixels.m.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+build/media-format-test: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_media_format.c.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+build/looper-registration-test: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_looper_registration.c.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+build/xrspace-moltenvr-test: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_xrspace.c.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+build/projection-frame-test: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_projection_frame.c.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+build/native-rotation-test: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_native_rotation.c.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+build/gl-video-import-test: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_gl_video_import.c.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+build/syberia-fov-test: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_syberia_fov.c.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+build/syberia-resource-lifetime: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_syberia_resource_lifetime.c.o build/moltenvr/tests/t_syberia_resource_lifetime.m.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+build/guest-frame-pool-test: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_guest_frame_pool.m.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+
+build/texel-source-lifetime: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_texel_source_lifetime.c.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@
+
+build/ovrplat-pagination-test: $(filter-out build/moltenvr/mains/m_boot.c.o,$(MVR_OBJS)) build/moltenvr/tests/t_ovrplat.c.o
+	xcrun clang++ -arch arm64 -g -o $@ $^ $(LDLIBS) -framework CoreAudio -framework Metal -framework QuartzCore $(shell pkg-config --libs sdl3)
+	codesign -s - $@

@@ -1,0 +1,473 @@
+{
+  "com.ilmxlab.tales": {
+    "target": "x3484270071659289",
+    "title": "Star Wars: Tales from the Galaxy's Edge",
+    "versionCode": 439699,
+    "missingTarget": true
+  },
+  "com.resolutiongames.demeo": {
+    "target": "x3634830803298285",
+    "title": "Demeo",
+    "versionCode": 142040696,
+    "missingTarget": true
+  },
+  "com.resolutiongames.abvriop.santacruz": {
+    "target": "x2718606324833775",
+    "title": "Angry Birds VR: Isle of Pigs",
+    "versionCode": 307278777,
+    "missingTarget": true
+  },
+  "com.lvonasek.csvr": {
+    "target": "cs1",
+    "title": "Counter-Strike",
+    "versionCode": 105,
+    "tree": "cs1",
+    "apk": "cs1.apk",
+    "libdir": "cs1/lib/arm64-v8a",
+    "entry": "libxash",
+    "obb": "obb",
+    "kind": "KL_GUEST_SDL2"
+  },
+  "com.fasttravelgames.lollipop": {
+    "target": "vampire",
+    "title": "Vampire: The Masquerade - Justice",
+    "versionCode": 1653,
+    "tree": "vampire",
+    "apk": "vampire.apk",
+    "libdir": "vampire/lib/arm64-v8a",
+    "entry": "libUE4",
+    "obb": "Android/obb/com.fasttravelgames.lollipop",
+    "kind": "KL_GUEST_UE4",
+    "verified": true,
+    "tested": true,
+    "verificationSource": "User confirmed working in MoltenVR on macOS on 2026-10-21."
+  },
+  "com.odders.shapeit": {
+    "target": "x4015163475201433",
+    "title": "LES MILLS BODYCOMBAT: Fitness workouts",
+    "versionCode": 300000018,
+    "missingTarget": true
+  },
+  "com.nextgenreality.GunClubVR": {
+    "target": "x2285803881494677",
+    "title": "Gun Club VR",
+    "versionCode": 410,
+    "missingTarget": true
+  },
+  "com.Armature.VR4": {
+    "target": "x2637179839719680",
+    "title": "Resident Evil 4",
+    "versionCode": 203,
+    "tree": "x2637179839719680",
+    "apk": "x2637179839719680.apk",
+    "libdir": "x2637179839719680/lib/arm64-v8a",
+    "entry": "libUE4",
+    "obb": "Android/obb/com.Armature.VR4",
+    "kind": "KL_GUEST_UE4"
+  },
+  "com.Experiment7.Aurora": {
+    "target": "x3882524545155280",
+    "title": "Catan VR",
+    "versionCode": 11842,
+    "missingTarget": true
+  },
+  "com.SDI.BHM": {
+    "target": "x5767635983306831",
+    "title": "Skydance's BEHEMOTH",
+    "versionCode": 55911500,
+    "missingTarget": true
+  },
+  "com.MightyCoconut.WalkaboutMiniGolf": {
+    "target": "walkabout",
+    "title": "Walkabout Mini Golf",
+    "versionCode": 60366,
+    "tree": "walkabout",
+    "apk": "walkabout.apk",
+    "libdir": "walkabout/lib/arm64-v8a",
+    "entry": "libmain",
+    "obb": "obb",
+    "kind": "KL_GUEST_UNITY",
+    "verified": true,
+    "verificationSource": "Gameplay confirmed by the project owner on macOS with MoltenVR. Performance and individual features may vary.",
+    "runtimeEnv": {
+      "KL_PLAT_USER": "1"
+    }
+  },
+  "com.Ubisoft.ACNexusVR": {
+    "target": "x5812519008825194",
+    "title": "Assassin’s Creed® Nexus VR",
+    "versionCode": 207706,
+    "missingTarget": true,
+    "verified": true,
+    "verificationSource": "Gameplay confirmed by the project owner on macOS with MoltenVR. Performance and individual features may vary.",
+    "runtimeOverrides": true,
+    "runtimeEnv": {
+      "KL_MOLTENVR_RECENTER_WATCH": "1",
+      "KL_AC_FAST_NETWORK": "1",
+      "KL_MOLTENVR_COMPOSITE_PANELS": "1"
+    }
+  },
+  "com.VerticalRobot.RedMatter2": {
+    "target": "redmatter2",
+    "title": "Red Matter 2",
+    "versionCode": 75,
+    "tree": "redmatter2",
+    "apk": "redmatter2.apk",
+    "libdir": "redmatter2/lib/arm64-v8a",
+    "entry": "libUE4",
+    "obb": "Android/obb/com.VerticalRobot.RedMatter2",
+    "kind": "KL_GUEST_UE4"
+  },
+  "com.beatgames.beatsaber": {
+    "target": "beatsaber140",
+    "title": "Beat Saber",
+    "versionCode": 1716,
+    "tree": "beatsaber140",
+    "apk": "beatsaber-1.40.apk",
+    "libdir": "beatsaber140/lib/arm64-v8a",
+    "entry": "libmain",
+    "obb": "obb",
+    "kind": "KL_GUEST_UNITY",
+    "graphics": "gles",
+    "runtimeEnv": {}
+  },
+  "com.cloudheadgames.pistolwhip": {
+    "target": "x2104963472963790",
+    "title": "Pistol Whip",
+    "versionCode": 2104,
+    "missingTarget": true
+  },
+  "com.turbobutton.fp2": {
+    "target": "x2401648309868679",
+    "title": "Floor Plan 2",
+    "versionCode": 250,
+    "missingTarget": true
+  },
+  "steam-app-546560": {
+    "target": "alyx",
+    "title": "Half-Life: Alyx",
+    "versionCode": 25487405,
+    "tree": "lx",
+    "apk": "",
+    "libdir": "",
+    "entry": "hlvr",
+    "obb": "obb",
+    "kind": "KL_GUEST_LINUX"
+  },
+  "com.Oneiros.Oniri_ForestDemo": {
+    "target": "x7611090302277055",
+    "title": "Forest - Oniri tech demo",
+    "versionCode": 27,
+    "missingTarget": true
+  },
+  "com.thunderful.legobricktales": {
+    "target": "x6521909757843713",
+    "title": "LEGO® Bricktales",
+    "versionCode": 201449,
+    "missingTarget": true
+  },
+  "com.valvesoftware.steamlinkvr": {
+    "target": "steamlink-vr",
+    "title": "Steam Link",
+    "versionCode": 5002363,
+    "tree": "steamlink-vr",
+    "apk": "steamlink-vr.apk",
+    "libdir": "steamlink-vr/lib/arm64-v8a",
+    "entry": "libvrlink_scene",
+    "obb": "obb",
+    "kind": "KL_GUEST_STEAMLINK"
+  },
+  "com.VerticalRobot.RedMatter": {
+    "target": "x2180753588712484",
+    "title": "Red Matter",
+    "versionCode": 38,
+    "missingTarget": true
+  },
+  "com.polyarc.MossGame": {
+    "target": "moss",
+    "title": "Moss",
+    "versionCode": 151047,
+    "tree": "moss",
+    "apk": "moss.apk",
+    "libdir": "moss/lib/arm64-v8a",
+    "entry": "libUE4",
+    "obb": "Android/obb/com.polyarc.MossGame",
+    "kind": "KL_GUEST_UE4"
+  },
+  "com.Survios.Midnight": {
+    "target": "x24882487241367228",
+    "title": "Alien: Rogue Incursion",
+    "versionCode": 526346,
+    "entry": "libUnreal",
+    "kind": "KL_GUEST_UE4",
+    "obb": "Android/obb/com.Survios.Midnight",
+    "verified": true,
+    "verificationSource": "Working game confirmed by the project owner on macOS with MoltenVR.",
+    "runtimeEnv": {
+      "KL_MOLTENVR_COMPOSITE_PANELS": "1",
+      "KL_VK_VIN_FILL": "1",
+      "KL_UE4_EXTRA_CVARS": "-dpcvars=r.ShaderPipelineCache.StartupMode=0,r.PSOPrecaching=0"
+    },
+    "versions": {
+      "523063": {
+        "guestLibrary": "libUnreal.so",
+        "guestSha256": "8f6f6d5056c9c02d45866e116eb5a679a97d3027fd977226ccbd4783de6cd014",
+        "runtimeEnv": {
+          "KL_VK_DEPTH_VARIANT": "1",
+          "KL_VK_VIN_SEPARATE_OFFSETS": "1",
+          "KL_UE4_FORCE_QUIT": "1",
+          "KL_UE_ERROR_HIST_OFFSET": "0xa75c2f8",
+          "KL_VK_FOZ_REPLAY": "0",
+          "KL_VK_FOZ_RECORD": "0"
+        }
+      }
+    }
+  },
+  "com.polyarc.Moss2": {
+    "target": "x4395292760584049",
+    "title": "Moss: Book II",
+    "versionCode": 149619,
+    "missingTarget": true
+  },
+  "com.twistedpixelgames.PILO": {
+    "target": "x3240283705987790",
+    "title": "Marvel's Deadpool VR",
+    "versionCode": 8742,
+    "missingTarget": true
+  },
+  "com.Magnopus.MissionISS": {
+    "target": "x2094303753986147",
+    "title": "Mission: ISS",
+    "versionCode": 218,
+    "missingTarget": true
+  },
+  "com.ILMxLAB.VaderImmortal.ep2": {
+    "target": "x2223615721048141",
+    "title": "Vader Immortal: Episode II",
+    "versionCode": 387778,
+    "missingTarget": true
+  },
+  "com.enhanceexperience.tetriseffect": {
+    "target": "x3386618894743567",
+    "title": "Tetris® Effect: Connected",
+    "versionCode": 158,
+    "missingTarget": true
+  },
+  "com.GhostlyBirdGames.BattleGlide": {
+    "target": "x9685315748175636",
+    "title": "BattleGlide",
+    "versionCode": 69,
+    "missingTarget": true
+  },
+  "com.drbeef.doom3quest": {
+    "target": "doom3quest",
+    "title": "Doom 3",
+    "versionCode": 48,
+    "tree": "doom3quest",
+    "apk": "doom3quest.apk",
+    "libdir": "doom3quest/lib/arm64-v8a",
+    "entry": "libdoom3",
+    "obb": "obb",
+    "kind": "KL_GUEST_GLES3JNI"
+  },
+  "com.ILMxLAB.VaderImmortal.ep3": {
+    "target": "x2426206484098337",
+    "title": "Vader Immortal: Episode III",
+    "versionCode": 387932,
+    "missingTarget": true
+  },
+  "com.Virtuos.R6DLM": {
+    "target": "x3647259232032222",
+    "title": "Medal of Honor™: Above and Beyond",
+    "versionCode": 12297,
+    "missingTarget": true
+  },
+  "com.YourCompany.SWP_VR": {
+    "target": "x3180994211970184",
+    "title": "Star Wars™ Pinball VR",
+    "versionCode": 10765,
+    "missingTarget": true
+  },
+  "com.camouflaj.manta": {
+    "target": "batman",
+    "title": "Batman: Arkham Shadow",
+    "versionCode": 350961,
+    "tree": "batman",
+    "apk": "batman.apk",
+    "libdir": "batman/lib/arm64-v8a",
+    "entry": "libmain",
+    "obb": "obb",
+    "kind": "KL_GUEST_UNITY",
+    "verified": true,
+    "verificationSource": "Gameplay confirmed by the project owner on macOS with MoltenVR. Performance and individual features may vary.",
+    "runtimeEnv": {
+      "KL_VK_SPOOF_ADRENO": "1",
+      "KL_UNITY_ARGS": "-force-vulkan",
+      "KL_VK_VIDEO_IMPORT": "1",
+      "KL_MEDIA_EXTRACTOR": "1",
+      "KL_VTDEC_BGRA": "1"
+    }
+  },
+  "com.RuneSkovboJohansen.EyeOfTheTemple": {
+    "target": "x5361030930653377",
+    "title": "Eye of the Temple",
+    "versionCode": 528,
+    "missingTarget": true
+  },
+  "unity.SUPERHOT_Team.SUPERHOT_VR_QA": {
+    "target": "superhot",
+    "title": "SUPERHOT VR",
+    "versionCode": 161,
+    "tree": "superhot",
+    "apk": "superhot.apk",
+    "libdir": "superhot/lib/arm64-v8a",
+    "entry": "libmain",
+    "obb": "obb",
+    "kind": "KL_GUEST_UNITY"
+  },
+  "com.ILMxLAB.VaderImmortal.ep1": {
+    "target": "x2108775495884888",
+    "title": "Vader Immortal: Episode I",
+    "versionCode": 387770,
+    "missingTarget": true
+  },
+  "com.nDreams.Ghostbusters": {
+    "target": "x4746232908818706",
+    "title": "Ghostbusters: Rise of the Ghost Lord",
+    "versionCode": 3256358,
+    "missingTarget": true
+  },
+  "io.doublejack.maestro": {
+    "target": "x6963344583787383",
+    "title": "Maestro",
+    "versionCode": 397,
+    "missingTarget": true
+  },
+  "com.tvb.cubism": {
+    "target": "x2264524423619421",
+    "title": "Cubism",
+    "versionCode": 361,
+    "missingTarget": true
+  },
+  "com.downpourinteractive.onward": {
+    "target": "x2677344882310094",
+    "title": "Onward",
+    "versionCode": 18701,
+    "missingTarget": true
+  },
+  "com.Sanzaru.Wrath2": {
+    "target": "wrath2",
+    "title": "Asgard's Wrath 2",
+    "versionCode": 5513,
+    "tree": "wrath2",
+    "apk": "wrath2.apk",
+    "libdir": "wrath2/lib/arm64-v8a",
+    "entry": "libUE4",
+    "obb": "Android/obb/com.Sanzaru.Wrath2",
+    "kind": "KL_GUEST_UE4"
+  },
+  "com.square_enix.android_meta.trianglexr": {
+    "target": "x5340130476095884",
+    "title": "TRIANGLE STRATEGY",
+    "versionCode": 13214,
+    "missingTarget": true
+  },
+  "com.kluge.SynthRiders": {
+    "target": "x2436558143118760",
+    "title": "Synth Riders",
+    "versionCode": 1177,
+    "missingTarget": true
+  },
+  "com.FuturLab.PowerWashSimulator": {
+    "target": "x3713270985434472",
+    "title": "PowerWash Simulator VR",
+    "versionCode": 3055,
+    "missingTarget": true
+  },
+  "foundation.icosa.openbrush": {
+    "target": "openbrush",
+    "title": "Open Brush",
+    "tree": "openbrush",
+    "apk": "openbrush.apk",
+    "libdir": "openbrush/lib/arm64-v8a",
+    "entry": "libmain",
+    "obb": "obb",
+    "kind": "KL_GUEST_UNITY"
+  },
+  "org.icosa.openbrush": {
+    "target": "openbrush",
+    "title": "Open Brush",
+    "tree": "openbrush",
+    "apk": "openbrush.apk",
+    "libdir": "openbrush/lib/arm64-v8a",
+    "entry": "libmain",
+    "obb": "obb",
+    "kind": "KL_GUEST_UNITY"
+  },
+  "com.MightyEyes.Wanderer": {
+    "target": "wanderer",
+    "title": "Wanderer: The Fragments of Fate",
+    "tree": "wanderer",
+    "entry": "libUnreal",
+    "obb": "Android/obb/com.MightyEyes.Wanderer",
+    "kind": "KL_GUEST_UE4",
+    "tested": true,
+    "verified": false,
+    "verificationSource": "The project owner reached gameplay; render issues and a later crash are under repair.",
+    "runtimeEnv": {
+      "KL_MOLTENVR_COMPOSITE_PANELS": "1",
+      "KL_VK_EMU_PRECOPY": "1",
+      "KL_VK_NO_TRANSIENT": "1",
+      "KL_VK_EMU_TEXELBUF": "1",
+      "KL_MVK_NO_ARGBUF": "1",
+      "KL_WANDERER_NOMSAA": "0",
+      "KL_VK_MSAA_STORE": "1",
+      "KL_UE4_EXTRA_CVARS": "-dpcvars=r.ShaderPipelineCache.Enabled=0,r.ShaderPipelineCache.StartupMode=0,r.PSOPrecaching=0"
+    }
+  },
+  "com.Microids.SyberiaVR": {
+    "title": "Syberia VR",
+    "verified": true,
+    "verificationSource": "Gameplay confirmed by the project owner on macOS with MoltenVR, including correct stereo and 4x MSAA.",
+    "runtimeOverrides": true,
+    "runtimeEnv": {
+      "KL_MVK_DETACH_DEAD_VIEWS": "1",
+      "MVK_CONFIG_MAX_ACTIVE_METAL_COMMAND_BUFFERS_PER_QUEUE": "4",
+      "KL_METAL_RETIRED_TEXTURES": "1",
+      "KL_VK_RELEASE_COMMAND_CACHE": "1",
+      "MVK_CONFIG_USE_COMMAND_POOLING": "0",
+      "MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS": "0",
+      "KL_MOLTENVR_GUEST_POOL": "1",
+      "KL_STALL_MS": "0",
+      "KL_VK_MAX_SAMPLES": "4",
+      "KL_VK_MSAA_MEMORYLESS": "1",
+      "KL_VK_MSAA_TRANSIENT_ONLY": "1",
+      "KL_MEM_TOTAL_MB": "16384",
+      "KL_MOLTENVR_NATIVE_CONE": "1",
+      "KL_OVRP_UNIFY_FRUSTUM": "1",
+      "KL_VK_VIDEO_IMPORT": "1",
+      "KL_MEDIA_EXTRACTOR": "1",
+      "KL_VTDEC_BGRA": "1",
+      "KL_MOLTENVR_COMPOSITE_PANELS": "1"
+    },
+    "driverRecipe": "syberia-image-view-lifetime.json",
+    "driverDirectory": "runtime/graphics/syberia"
+  },
+  "com.StressLevelZero.BONELAB": {
+    "title": "BONELAB",
+    "verified": true,
+    "verificationSource": "Working game confirmed by the project owner on macOS with MoltenVR."
+  },
+  "com.resolutiongames.jade": {
+    "title": "Demeo x Dungeons & Dragons: Battlemarked",
+    "graphics": "gles",
+    "runtimeEnv": {}
+  },
+  "com.CMGames.IntoTheRadius2": {
+    "title": "Into the Radius 2",
+    "runtimeEnv": {
+      "KL_MVK_NO_ARGBUF": "1",
+      "KL_VK_MSAA_STORE": "1"
+    }
+  }
+}

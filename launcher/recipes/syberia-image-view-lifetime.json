@@ -1,0 +1,16 @@
+{
+  "id": "syberia-image-view-lifetime-v1",
+  "package": "com.Microids.SyberiaVR",
+  "status": "user-confirmed-gameplay",
+  "msaa": 4,
+  "cause": "Live image views retained the Metal backing of destroyed MSAA depth images. Release view storage at parent image destruction while preserving view handles until their later destruction.",
+  "scope": "Opt-in, exact companion MoltenVK only; do not enable for arbitrary drivers.",
+  "runtime_sha256": "b5064eb7741f568eb66f18e20703b9c9115216add3adcec2c91326aa133586a5",
+  "driver_sha256": "cd4e840bae1c3d66d47222f0a7a2a29cb36a08a5162e6e450c7bc920c271d07e",
+  "driver_source_sha256": "aef00b13bcc808adf15b85bef9ae67393d92be7ed5dfe41cad16fa809e4a4c5f",
+  "required_env": {
+    "KL_MVK_DETACH_DEAD_VIEWS": "1"
+  },
+  "regression_test": "tests/t_syberia_resource_lifetime.c + .m; LIFETIME_KEEP_VIEWS=1; 60 allocations, 0 MiB retained; later view destruction succeeds",
+  "confirmed": "2026-10-20"
+}
