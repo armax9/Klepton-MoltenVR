@@ -445,6 +445,26 @@ void kl_driver_init(const kl_target *t, const char *libdir, kl_slink_door door) 
         kl_egl_set_gles_version(3, 0);
         fprintf(stderr, "  [gl] Catan VR: GLES 3.0 capability profile (ANGLE backend)\n");
     }
+    if (t && !strcmp(t->name, "x3919415921458774")) {
+        // Gods of Gravity (Unity 2021.3.45f2): told 3.2, its wand models came
+        // out as large flat surfaces of a different colour each run, from the
+        // right hand out across the scene (headset, 2026-10-19/20; not the
+        // pins, VFX Graph, base-vertex draws, CPU skinning or non-finite
+        // positions, each switched off on its own). Told 3.0, the Mac run draws
+        // the wands that were missing there under 3.2.
+        kl_egl_set_gles_version(3, 0);
+        fprintf(stderr, "  [gl] Gods of Gravity: GLES 3.0 capability profile (ANGLE backend)\n");
+    }
+    // KL_GLES_VERSION=<major>.<minor> — the GLES level described to any guest,
+    // for trying a title on the 3.0 profile above without a build.
+    {
+        const char *v = getenv("KL_GLES_VERSION");
+        int ma = 0, mi = 0;
+        if (v && sscanf(v, "%d.%d", &ma, &mi) == 2 && ma >= 2 && ma <= 3 && mi >= 0 && mi <= 2) {
+            kl_egl_set_gles_version(ma, mi);
+            fprintf(stderr, "  [gl] KL_GLES_VERSION: GLES %d.%d described\n", ma, mi);
+        }
+    }
 
 }
 

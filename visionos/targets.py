@@ -1217,6 +1217,16 @@ STORE_DEFAULTS = {
     "x2108775495884888": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
     "x2223615721048141": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
     "x2426206484098337": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
+    # Gods of Gravity (Unity 2021.3.45f2, OpenGL ES). Foveation off, Synth
+    # Riders' case one step further: the scene goes into a MULTISAMPLED target
+    # of the eye size, which the size rule foveates; its resolve (a blit, no
+    # rasterization through the map) copies the squeezed picture as it lies
+    # into a plain texture, and the final pass samples that by screen position
+    # into the eye texture — through the map a second time. The compositor
+    # undoes one squeeze, so the picture filled only part of the view and bent
+    # when the head turned (on device, 2026-10-18; the double squeeze measured
+    # on the Mac with KL_GLFB_MTL=1 KL_VRR=1 KL_GLFB_DUMP_FBOS=1).
+    "x3919415921458774": {"foveation": False, "foveation_reset": 1},
 }
 
 
