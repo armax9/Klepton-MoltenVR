@@ -3299,6 +3299,70 @@ static int kl_tid_alive(int tid) {
     return found;
 }
 
+static pthread_t kl_tid_to_pthread(int tid) {
+    if (tid <= 0) return NULL;
+    if (tid == klb_gettid()) return pthread_self();
+    thread_act_array_t th = NULL;
+    mach_msg_type_number_t n = 0;
+    if (task_threads(mach_task_self(), &th, &n) != KERN_SUCCESS) return NULL;
+    pthread_t pt = NULL;
+    for (mach_msg_type_number_t i = 0; i < n; i++) {
+        if (!pt) {
+            thread_identifier_info_data_t id;
+            mach_msg_type_number_t cnt = THREAD_IDENTIFIER_INFO_COUNT;
+            if (thread_info(th[i], THREAD_IDENTIFIER_INFO, (thread_info_t)&id, &cnt) == KERN_SUCCESS
+                && (int)id.thread_id == tid) {
+                pt = pthread_from_mach_thread_np(th[i]);
+            }
+        }
+        mach_port_deallocate(mach_task_self(), th[i]);
+    }
+    vm_deallocate(mach_task_self(), (vm_address_t)th, n * sizeof(*th));
+    return pt;
+}
+
+int klb_tgkill(pid_t tgid, pid_t tid, int sig) {
+    if (tgid != getpid()) {
+        kl_errno_set(ESRCH);
+        return -1;
+    }
+    if (tid <= 0) {
+        kl_errno_set(EINVAL);
+        return -1;
+    }
+    if (sig < 0 || sig >= 65) {
+        kl_errno_set(EINVAL);
+        return -1;
+    }
+    if (sig == 0) {
+        if (tid == klb_gettid()) return 0;
+        int alive = kl_tid_alive((int)tid);
+        if (alive != 0) return 0;
+        kl_errno_set(ESRCH);
+        return -1;
+    }
+    pthread_t pt = kl_tid_to_pthread((int)tid);
+    if (!pt) {
+        kl_errno_set(ESRCH);
+        return -1;
+    }
+    int dsig = kl_sig_to_darwin(sig);
+    int r = pthread_kill(pt, dsig);
+    if (kl_env_on("KL_TRACE_SIG", 0)) {
+        fprintf(stderr, "  [sig] tgkill(tgid %d, tid %d, sig %d [d %d]) -> %d\n",
+                (int)tgid, (int)tid, sig, dsig, r);
+    }
+    if (r != 0) {
+        kl_errno_set(r);
+        return -1;
+    }
+    return 0;
+}
+
+int klb_tkill(pid_t tid, int sig) {
+    return klb_tgkill(getpid(), tid, sig);
+}
+
 long klb_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6) {
     // futex is the only syscall here that reads past the fourth argument, so a5
     // and a6 must be carried through: without them FUTEX_WAKE_OP cannot be

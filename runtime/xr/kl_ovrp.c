@@ -457,6 +457,16 @@ static uint64_t klovrp_GetDisplayAdapterId2(const void **out) {
     return OVRP_SUCCESS;
 }
 
+static uint64_t klovrp_Initialize1(void) {
+    klovrp_Initialize("ovrp_Initialize");
+    return OVRP_TRUE;
+}
+static uint64_t klovrp_Initialize2(void) {
+    klovrp_Initialize("ovrp_Initialize2");
+    return OVRP_TRUE;
+}
+static uint64_t klovrp_Initialize3(void) { return klovrp_Initialize("ovrp_Initialize3"); }
+static uint64_t klovrp_Initialize4(void) { return klovrp_Initialize("ovrp_Initialize4"); }
 static uint64_t klovrp_Initialize5(void) { return klovrp_Initialize("ovrp_Initialize5"); }
 // The 6 revision sits between the two we already answer; ieytd2's
 // libOculusXRPlugin calls it and the unimplemented-entry abort was its whole
@@ -12345,6 +12355,10 @@ static const struct { const char *name; void *fn; } g_ovrp_impl[] = {
     {"ovrp_GetInstanceExtensionsVk", (void *)klovrp_GetInstanceExtensionsVk},
     {"ovrp_GetDeviceExtensionsVk",   (void *)klovrp_GetDeviceExtensionsVk},
     // The init state and everything that reads it. See klovrp_GetInitialized.
+    {"ovrp_Initialize",    (void *)klovrp_Initialize1},
+    {"ovrp_Initialize2",   (void *)klovrp_Initialize2},
+    {"ovrp_Initialize3",   (void *)klovrp_Initialize3},
+    {"ovrp_Initialize4",   (void *)klovrp_Initialize4},
     {"ovrp_Initialize5",   (void *)klovrp_Initialize5},
     {"ovrp_Initialize6",   (void *)klovrp_Initialize6},
     {"ovrp_RecenterTrackingOrigin2", (void *)klovrp_RecenterTrackingOrigin2},
@@ -13146,6 +13160,13 @@ static void *kl_ovrp_sym_inner(const char *name) {
         }
     for (size_t i = 0; i < sizeof g_ovrp_absent / sizeof g_ovrp_absent[0]; i++)
         if (strcmp(g_ovrp_absent[i], name) == 0) return NULL;
+    // Unity IL2CPP P/Invoke probes the "W" (wide) variant first for entry points
+    // with CharSet.Auto. Android's libOVRPlugin.so does not export "W" entry points
+    // (except ovrp_DismissHSW). Returning NULL lets IL2CPP fall back to the
+    // un-suffixed symbol.
+    size_t n = strlen(name);
+    if (n > 1 && name[n - 1] == 'W' && strcmp(name, "ovrp_DismissHSW") != 0)
+        return NULL;
     void *shared = klovrp_shared(name);
     if (shared) return shared;
     return kl_named_stub(name, (void *)klovrp_called);

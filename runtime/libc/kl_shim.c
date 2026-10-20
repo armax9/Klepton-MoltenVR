@@ -2122,6 +2122,7 @@ X(klb_truncate) X(klb_mkfifo) X(klb_readlink) X(klb_symlink) X(klb_link) X(klb_u
 X(klb_utime) X(klb_unlinkat) X(klb_mkdirat) X(klb_fchmodat) X(klb_fchownat)
 X(klb_readlinkat) X(klb_renameat) X(klb_symlinkat) X(klb_utimensat) X(klb_freopen)
 X(klb_kill) X(klb_raise) X(klb_signal) X(klb_sigwait) X(klb_sigsuspend) X(klb_sigpending)
+X(klb_tgkill) X(klb_tkill)
 X(klb___fpclassifyd) X(klb_popen) X(klb_pclose)
 X(klb_statfs64) X(klb_execlp)
 X(klb_errno) X(klb_gettid) X(klb_sysprop_find) X(klb_sysprop_get) X(klb_sysprop_read) X(klb_sysprop_read_callback)
@@ -2740,6 +2741,7 @@ static const kl_entry g_shim[] = {
     E("freopen", klb_freopen),
     // Signal numbers: the SIGUSR2/SIGSYS swap — see kl_sig_to_darwin.
     E("kill", klb_kill), E("raise", klb_raise), E("signal", klb_signal),
+    E("tgkill", klb_tgkill), E("tkill", klb_tkill),
     E("sigwait", klb_sigwait), E("sigsuspend", klb_sigsuspend),
     E("sigpending", klb_sigpending),
     // Layout or numbering mismatches the compiler cannot see: bionic's FP_*
