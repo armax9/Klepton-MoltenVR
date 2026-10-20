@@ -1214,9 +1214,15 @@ STORE_DEFAULTS = {
     # second refresh — an even 60 — and 4096 an eye (klovrp_title_cap in
     # kl_ovrp.c). Episodes II and III are the same engine and get the same,
     # not yet run on a headset. All stay a player's choice in the start window.
-    "x2108775495884888": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
-    "x2223615721048141": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
-    "x2426206484098337": {"max_rate": 120, "test_on": "KL_GUEST_PACE_DIV"},
+    # Since 2026-10-20 all three have the owner's later picture settings, read
+    # off his Episode I: 4608 an eye (kl_ovrp.c), rendered at 95 % and
+    # upscaled to the full eye size by MetalFX (KL_METALFX_UPSCALE).
+    "x2108775495884888": {"max_rate": 120, "render_scale": 0.95,
+                          "test_on": "KL_GUEST_PACE_DIV,KL_METALFX_UPSCALE"},
+    "x2223615721048141": {"max_rate": 120, "render_scale": 0.95,
+                          "test_on": "KL_GUEST_PACE_DIV,KL_METALFX_UPSCALE"},
+    "x2426206484098337": {"max_rate": 120, "render_scale": 0.95,
+                          "test_on": "KL_GUEST_PACE_DIV,KL_METALFX_UPSCALE"},
     # Gods of Gravity (Unity 2021.3.45f2, OpenGL ES). Foveation off, Synth
     # Riders' case one step further: the scene goes into a MULTISAMPLED target
     # of the eye size, which the size rule foveates; its resolve (a blit, no
